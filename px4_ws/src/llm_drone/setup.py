@@ -29,6 +29,7 @@ setup(
         'llm = llm_drone.llm_planner:main',
         'mpc_voxl = llm_drone.voxl_mpc_controller:main',
         'llm_voxl = llm_drone.voxl_llm_planner:main',
+        'performance_analyzer = llm_drone.performance_analyse:main',
         ],
     },
 )
