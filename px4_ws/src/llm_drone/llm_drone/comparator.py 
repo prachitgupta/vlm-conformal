@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""
+Trajectory Comparison Node
+Computes sup(error) between LLM and MPC trajectories
+Save as: ros2_ws/src/px4_vision/px4_vision/trajectory_comparator.py
+"""
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Float64
+import numpy as np
+from collections import deque
+
+
+class TrajectoryComparator(Node):
+    """
+    Subscribes to both LLM and MPC trajectory topics
+    Computes and publishes sup(error)
+    """
+    
+    def __init__(self):
+        super().__init__('trajectory_comparator')
+        
+        # Parameters
+        self.declare_parameter('buffer_size', 100)
+        buffer_size = self.get_parameter('buffer_size').value
+        
+        # Storage
+        self.llm_trajectory = deque(maxlen=buffer_size)
+        self.mpc_trajectory = deque(maxlen=buffer_size)
+        
+        # Subscribers
+        self.llm_sub = self.create_subscription(
+            PoseStamped, '/llm/trajectory', self.llm_callback, 10)
+        self.mpc_sub = self.create_subscription(
+            PoseStamped, '/mpc/trajectory', self.mpc_callback, 10)
+        
+        # Publishers
+        self.error_pub = self.create_publisher(Float64, '/trajectory/sup_error', 10)
+        
+        # Timer for computing error
+        self.timer = self.create_timer(1.0, self.compute_and_publish_error)
+        
+        self.get_logger().info('Trajectory Comparator initialized')
+    
+    def llm_callback(self, msg):
+        """Store LLM trajectory point"""
+        point = np.array([
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        ])
+        self.llm_trajectory.append(point)
+    
+    def mpc_callback(self, msg):
+        """Store MPC trajectory point"""
+        point = np.array([
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        ])
+        self.mpc_trajectory.append(point)
+    
+    def compute_and_publish_error(self):
+        """Compute supremum error and publish"""
+        
+        if len(self.llm_trajectory) == 0 or len(self.mpc_trajectory) == 0:
+            return
+        
+        # Compute errors at each timestep
+        min_len = min(len(self.llm_trajectory), len(self.mpc_trajectory))
+        errors = []
+        
+        for i in range(min_len):
+            llm_point = self.llm_trajectory[i]
+            mpc_point = self.mpc_trajectory[i]
+            error = np.linalg.norm(llm_point - mpc_point)
+            errors.append(error)
+        
+        # Supremum (max error)
+        sup_error = max(errors)
+        
+        # Mean error
+        mean_error = np.mean(errors)
+        
+        # Publish
+        msg = Float64()
+        msg.data = sup_error
+        self.error_pub.publish(msg)
+        
+        # Log statistics
+        self.get_logger().info(
+            f'Trajectory Error - Sup: {sup_error:.3f}m, Mean: {mean_error:.3f}m, Points: {min_len}',
+            throttle_duration_sec=2.0
+        )
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = TrajectoryComparator()
+    
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
