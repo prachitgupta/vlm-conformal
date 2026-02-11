@@ -5,7 +5,6 @@ Save as: ros2_ws/src/px4_vision/px4_vision/llm_planner.py
 
 Subscribes to:
   - /fmu/out/vehicle_odometry (drone position)
-  - /camera/rgb (RGB image)
   - /camera/depth (Depth image)
 
 Publishes to:
@@ -28,11 +27,18 @@ import base64
 import json
 from openai import OpenAI
 import os
+from ament_index_python.packages import get_package_share_directory
+
+try:
+    from px4_msgs.msg import TrajectorySetpoint, OffboardControlMode, VehicleOdometry
+    HAS_PX4_MSGS = True
+except ImportError:
+    HAS_PX4_MSGS = False
 
 
 class LLMTrajectoryPlanner(Node):
     """
-    Uses GPT-4 Vision to generate trajectories based on RGB+Depth camera input
+    Uses GPT-4 Vision to generate trajectories based on depth camera input
     """
     
     def __init__(self):
@@ -47,10 +53,7 @@ class LLMTrajectoryPlanner(Node):
         self.client = OpenAI(api_key=api_key)
         
         # Load prompt from file
-        prompt_file = os.path.join(
-            os.path.dirname(__file__), 
-            '../config/llm_prompt.txt'
-        )
+        prompt_file = self._resolve_prompt_file()
         try:
             with open(prompt_file, 'r') as f:
                 self.system_prompt = f.read()
@@ -74,19 +77,22 @@ class LLMTrajectoryPlanner(Node):
         # State
         self.current_position = np.zeros(3)
         self.current_velocity = np.zeros(3)
-        self.rgb_image = None
         self.depth_image = None
+        self.last_environment_vector = None
         self.bridge = CvBridge()
+        self.warned_fallback_pub = False
         
         # Trajectory storage
         self.llm_trajectory = []
         self.mpc_trajectory = []
         
         # Subscribers
-        self.odom_sub = self.create_subscription(
-            Odometry, '/fmu/out/vehicle_odometry', self.odometry_callback, 10)
-        self.rgb_sub = self.create_subscription(
-            Image, '/camera/rgb', self.rgb_callback, 10)
+        if HAS_PX4_MSGS:
+            self.odom_sub = self.create_subscription(
+                VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, 10)
+        else:
+            self.odom_sub = self.create_subscription(
+                Odometry, '/fmu/out/vehicle_odometry', self.odometry_callback, 10)
         self.depth_sub = self.create_subscription(
             Image, '/camera/depth', self.depth_callback, 10)
         self.mpc_traj_sub = self.create_subscription(
@@ -95,26 +101,48 @@ class LLMTrajectoryPlanner(Node):
         # Publishers
         self.llm_traj_pub = self.create_publisher(
             PoseStamped, '/llm/trajectory', 10)
-        self.cmd_vel_pub = self.create_publisher(
-            TwistStamped, '/fmu/in/setpoint_velocity', 10)
+        # PX4 setpoint publishers (preferred for Gazebo PX4 offboard)
+        if HAS_PX4_MSGS:
+            self.traj_setpoint_pub = self.create_publisher(
+                TrajectorySetpoint, '/fmu/in/trajectory_setpoint', 10)
+            self.offboard_mode_pub = self.create_publisher(
+                OffboardControlMode, '/fmu/in/offboard_control_mode', 10)
+            self.cmd_vel_pub = None
+        else:
+            self.traj_setpoint_pub = None
+            self.offboard_mode_pub = None
+            self.cmd_vel_pub = self.create_publisher(
+                TwistStamped, '/fmu/in/setpoint_velocity', 10)
         
         # Timer for LLM queries
         update_period = 1.0 / self.get_parameter('update_rate').value
         self.timer = self.create_timer(update_period, self.plan_trajectory)
+        if HAS_PX4_MSGS:
+            self.offboard_timer = self.create_timer(0.1, self.publish_offboard_heartbeat)
         
         self.get_logger().info('LLM Trajectory Planner initialized')
         self.get_logger().info(f'Goal: {self.goal}')
+        if HAS_PX4_MSGS:
+            self.get_logger().info('Publishing PX4 trajectory setpoints to /fmu/in/trajectory_setpoint')
+        else:
+            self.get_logger().warn(
+                'px4_msgs not found in Python env; falling back to /fmu/in/setpoint_velocity'
+            )
     
     def _get_default_prompt(self):
         """Fallback prompt if file not found"""
         return """You are a drone motion planning system. Generate safe trajectories."""
-    
-    def rgb_callback(self, msg):
-        """Store latest RGB image"""
-        try:
-            self.rgb_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except Exception as e:
-            self.get_logger().error(f'RGB conversion error: {e}')
+
+    def _resolve_prompt_file(self):
+        """Resolve prompt path for both source and installed package layouts."""
+        local_path = os.path.join(os.path.dirname(__file__), '../config/llm_prompt.txt')
+        local_path = os.path.abspath(local_path)
+        if os.path.exists(local_path):
+            return local_path
+
+        share_dir = get_package_share_directory('llm_drone')
+        share_path = os.path.join(share_dir, 'config', 'llm_prompt.txt')
+        return share_path
     
     def depth_callback(self, msg):
         """Store latest depth image"""
@@ -134,6 +162,19 @@ class LLMTrajectoryPlanner(Node):
             msg.twist.twist.linear.x,
             msg.twist.twist.linear.y,
             msg.twist.twist.linear.z
+        ])
+
+    def vehicle_odometry_callback(self, msg):
+        """Update current state from px4_msgs/VehicleOdometry (NED)."""
+        self.current_position = np.array([
+            float(msg.position[0]),
+            float(msg.position[1]),
+            float(msg.position[2]),
+        ])
+        self.current_velocity = np.array([
+            float(msg.velocity[0]),
+            float(msg.velocity[1]),
+            float(msg.velocity[2]),
         ])
     
     def mpc_trajectory_callback(self, msg):
@@ -165,13 +206,119 @@ class LLMTrajectoryPlanner(Node):
         depth_colored = cv2.applyColorMap(depth_uint8, cv2.COLORMAP_JET)
         
         return depth_colored
+
+    def build_environment_vector(self):
+        """
+        Build numerical vector v from odometry + depth for motion planning.
+        """
+        if self.depth_image is None:
+            return None
+
+        depth = self.depth_image
+        valid_depth = depth[np.isfinite(depth)]
+        valid_depth = valid_depth[(valid_depth > 0.2) & (valid_depth < 20.0)]
+
+        depth_valid_fraction = float(valid_depth.size / depth.size) if depth.size > 0 else 0.0
+        global_min = float(np.min(valid_depth)) if valid_depth.size > 0 else 20.0
+        global_mean = float(np.mean(valid_depth)) if valid_depth.size > 0 else 20.0
+
+        h, w = depth.shape
+        sector_bounds = {
+            "far_left": (0, int(0.2 * w)),
+            "left": (int(0.2 * w), int(0.4 * w)),
+            "center": (int(0.4 * w), int(0.6 * w)),
+            "right": (int(0.6 * w), int(0.8 * w)),
+            "far_right": (int(0.8 * w), w),
+        }
+
+        sector_min = {}
+        sector_mean = {}
+        for name, (start, end) in sector_bounds.items():
+            patch = depth[:, start:end]
+            patch_valid = patch[np.isfinite(patch)]
+            patch_valid = patch_valid[(patch_valid > 0.2) & (patch_valid < 20.0)]
+            sector_min[name] = float(np.min(patch_valid)) if patch_valid.size > 0 else 20.0
+            sector_mean[name] = float(np.mean(patch_valid)) if patch_valid.size > 0 else 20.0
+
+        nearest_sector = min(sector_min, key=sector_min.get)
+        nearest_distance = float(sector_min[nearest_sector])
+        if nearest_distance < 1.5:
+            clearance_status = "blocked"
+        elif nearest_distance < 3.0:
+            clearance_status = "caution"
+        else:
+            clearance_status = "clear"
+
+        goal_delta = self.goal - self.current_position
+        dist_to_goal = float(np.linalg.norm(goal_delta))
+        speed = float(np.linalg.norm(self.current_velocity))
+        heading_to_goal_xy = float(np.arctan2(goal_delta[1], goal_delta[0]))
+
+        vector = {
+            "current_position_ned_m": [float(x) for x in self.current_position],
+            "current_velocity_mps": [float(v) for v in self.current_velocity],
+            "goal_position_ned_m": [float(g) for g in self.goal],
+            "goal_delta_m": [float(d) for d in goal_delta],
+            "distance_to_goal_m": dist_to_goal,
+            "speed_mps": speed,
+            "heading_to_goal_xy_rad": heading_to_goal_xy,
+            "depth_features": {
+                "valid_fraction": depth_valid_fraction,
+                "global_min_m": global_min,
+                "global_mean_m": global_mean,
+                "sector_min_m": sector_min,
+                "sector_mean_m": sector_mean,
+                "nearest_obstacle_sector": nearest_sector,
+                "nearest_obstacle_distance_m": nearest_distance,
+                "clearance_status": clearance_status,
+            },
+        }
+        self.last_environment_vector = vector
+        return vector
+
+    def translate_vector_to_nlp(self, vector):
+        """
+        Fixed translator T: v -> NLP(v).
+        Converts numerical environment vector into deterministic natural language.
+        """
+        if vector is None:
+            return "Environment summary unavailable: no depth data."
+
+        p = vector["current_position_ned_m"]
+        vel = vector["current_velocity_mps"]
+        g = vector["goal_position_ned_m"]
+        d = vector["goal_delta_m"]
+        depth = vector["depth_features"]
+        mins = depth["sector_min_m"]
+
+        lateral_hint = "prefer center progress"
+        side_clear = mins["right"] + mins["far_right"]
+        side_left = mins["left"] + mins["far_left"]
+        if side_clear > side_left + 0.8:
+            lateral_hint = "right side is clearer"
+        elif side_left > side_clear + 0.8:
+            lateral_hint = "left side is clearer"
+
+        return (
+            "Environment section (T(v)):\n"
+            f"- Current position NED is ({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f}) m.\n"
+            f"- Current velocity is ({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f}) m/s (speed {vector['speed_mps']:.2f} m/s).\n"
+            f"- Goal position NED is ({g[0]:.2f}, {g[1]:.2f}, {g[2]:.2f}) m.\n"
+            f"- Goal delta from current state is ({d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}) m with distance {vector['distance_to_goal_m']:.2f} m.\n"
+            f"- Depth validity fraction is {depth['valid_fraction']:.2f}. Global nearest obstacle distance is {depth['global_min_m']:.2f} m.\n"
+            f"- Sector minimum distances [far_left, left, center, right, far_right] are "
+            f"[{mins['far_left']:.2f}, {mins['left']:.2f}, {mins['center']:.2f}, {mins['right']:.2f}, {mins['far_right']:.2f}] m.\n"
+            f"- Nearest obstacle sector is {depth['nearest_obstacle_sector']} at {depth['nearest_obstacle_distance_m']:.2f} m "
+            f"and clearance status is {depth['clearance_status']}.\n"
+            f"- Lateral planning hint: {lateral_hint}."
+        )
     
     def plan_trajectory(self):
         """Query LLM for next trajectory point"""
         
         # Check if we have all data
-        if self.rgb_image is None or self.depth_image is None:
-            self.get_logger().warn('Waiting for camera data...', throttle_duration_sec=2.0)
+        if self.depth_image is None:
+            self.get_logger().warn('Waiting for depth camera data...', throttle_duration_sec=2.0)
             return
         
         # Check if goal reached
@@ -198,9 +345,12 @@ class LLMTrajectoryPlanner(Node):
                 traj_msg.pose.position.z = next_position[2]
                 self.llm_traj_pub.publish(traj_msg)
                 
-                # Compute velocity command
-                velocity = self.compute_velocity_command(next_position)
-                self.publish_velocity(velocity)
+                # Publish control command to PX4
+                if HAS_PX4_MSGS:
+                    self.publish_trajectory_setpoint(next_position)
+                else:
+                    velocity = self.compute_velocity_command(next_position)
+                    self.publish_velocity(velocity)
                 
                 # Compute error if MPC data available
                 if len(self.mpc_trajectory) > 0:
@@ -216,26 +366,15 @@ class LLMTrajectoryPlanner(Node):
     def query_llm(self):
         """Query OpenAI GPT-4 Vision for next waypoint"""
         
+        env_vector = self.build_environment_vector()
+        env_text = self.translate_vector_to_nlp(env_vector)
+
         # Encode images
-        rgb_base64 = self.encode_image(self.rgb_image)
         depth_colored = self.create_depth_visualization()
         depth_base64 = self.encode_image(depth_colored)
         
-        # Create user message
-        user_message = f"""
-Current State:
-- Position (NED): [{self.current_position[0]:.2f}, {self.current_position[1]:.2f}, {self.current_position[2]:.2f}] meters
-- Velocity: [{self.current_velocity[0]:.2f}, {self.current_velocity[1]:.2f}, {self.current_velocity[2]:.2f}] m/s
-- Goal (NED): [{self.goal[0]:.2f}, {self.goal[1]:.2f}, {self.goal[2]:.2f}] meters
-- Distance to goal: {np.linalg.norm(self.goal - self.current_position):.2f} meters
-
-Images:
-1. RGB Camera View (what the drone sees)
-2. Depth Map (closer objects are red/yellow, farther objects are blue)
-
-Task: Generate the next safe waypoint (x, y, z) in NED coordinates.
-Respond ONLY with valid JSON: {{"x": float, "y": float, "z": float, "reasoning": "brief explanation"}}
-"""
+        # Compose final prompt = fixed prompt + translated environment block + vector
+        user_message = self.compose_final_prompt(env_vector, env_text)
         
         # Call GPT-4 Vision
         response = self.client.chat.completions.create(
@@ -249,12 +388,6 @@ Respond ONLY with valid JSON: {{"x": float, "y": float, "z": float, "reasoning":
                     "role": "user",
                     "content": [
                         {"type": "text", "text": user_message},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{rgb_base64}"
-                            }
-                        },
                         {
                             "type": "image_url",
                             "image_url": {
@@ -280,18 +413,54 @@ Respond ONLY with valid JSON: {{"x": float, "y": float, "z": float, "reasoning":
             json_str = content[start:end]
             data = json.loads(json_str)
             
-            next_position = np.array([
-                float(data['x']),
-                float(data['y']),
-                float(data['z'])
-            ])
-            
+            if isinstance(data, dict) and "waypoints" in data:
+                waypoints = data.get("waypoints", [])
+                selected_idx = int(data.get("selected_waypoint_index", 0))
+                if not waypoints:
+                    raise ValueError("Empty waypoints list")
+                if selected_idx < 0 or selected_idx >= len(waypoints):
+                    raise ValueError("selected_waypoint_index out of range")
+
+                wp = waypoints[selected_idx]
+                next_position = np.array([
+                    float(wp['x']),
+                    float(wp['y']),
+                    float(wp['z'])
+                ])
+            else:
+                # Backward-compatible fallback schema
+                next_position = np.array([
+                    float(data['x']),
+                    float(data['y']),
+                    float(data['z'])
+                ])
+
             self.get_logger().info(f"Reasoning: {data.get('reasoning', 'N/A')}")
             return next_position
             
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             self.get_logger().error(f'Failed to parse LLM response: {e}')
             return None
+
+    def compose_final_prompt(self, env_vector, env_text):
+        """Build final prompt from fixed instructions + dynamic environment section."""
+        return f"""
+Use the fixed planning policy exactly as defined in the system prompt.
+
+Dynamic Environment Section (T(v)):
+{env_text}
+
+Numerical Environment Vector v:
+{json.dumps(env_vector, indent=2)}
+
+Sensor attachments:
+1) Depth map visualization (red/yellow close, blue far)
+
+Return only one JSON object with keys:
+- waypoints
+- selected_waypoint_index
+- reasoning
+"""
     
     def compute_velocity_command(self, target_position):
         """Convert target position to velocity command"""
@@ -309,16 +478,54 @@ Respond ONLY with valid JSON: {{"x": float, "y": float, "z": float, "reasoning":
     
     def publish_velocity(self, velocity):
         """Publish velocity command"""
+        if self.cmd_vel_pub is None:
+            return
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.twist.linear.x = float(velocity[0])
         msg.twist.linear.y = float(velocity[1])
         msg.twist.linear.z = float(velocity[2])
         self.cmd_vel_pub.publish(msg)
+
+        if not self.warned_fallback_pub:
+            self.get_logger().warn(
+                'Using /fmu/in/setpoint_velocity fallback. '
+                'Install px4_msgs to publish /fmu/in/trajectory_setpoint.'
+            )
+            self.warned_fallback_pub = True
+
+    def publish_offboard_heartbeat(self):
+        """Publish OffboardControlMode heartbeat required by PX4 offboard control."""
+        if self.offboard_mode_pub is None:
+            return
+        msg = OffboardControlMode()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.position = True
+        msg.velocity = False
+        msg.acceleration = False
+        self.offboard_mode_pub.publish(msg)
+
+    def publish_trajectory_setpoint(self, target_position):
+        """Publish position setpoint directly to PX4 trajectory setpoint topic."""
+        if self.traj_setpoint_pub is None:
+            return
+        msg = TrajectorySetpoint()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.position = [
+            float(target_position[0]),
+            float(target_position[1]),
+            float(target_position[2]),
+        ]
+        msg.yaw = 0.0
+        self.traj_setpoint_pub.publish(msg)
     
     def publish_zero_velocity(self):
         """Stop the drone"""
-        self.publish_velocity(np.zeros(3))
+        if HAS_PX4_MSGS:
+            # Hold current position when using trajectory setpoints.
+            self.publish_trajectory_setpoint(self.current_position)
+        else:
+            self.publish_velocity(np.zeros(3))
     
     def compute_trajectory_error(self):
         """

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Model Predictive Control (MPC) Vision-Based Obstacle Avoidance
-Uses RGB + Depth camera for obstacle detection and avoidance
+Uses depth camera for obstacle detection and avoidance
 Ready for deployment to real hardware (Starling 2)
 
 Dependencies:
@@ -24,6 +24,12 @@ from mavsdk.offboard import OffboardError, VelocityBodyYawspeed, PositionNedYaw
 import cvxpy as cp
 from scipy.spatial import distance
 import threading
+
+try:
+    from px4_msgs.msg import TrajectorySetpoint, OffboardControlMode, VehicleOdometry
+    HAS_PX4_MSGS = True
+except ImportError:
+    HAS_PX4_MSGS = False
 
 
 class MPCVisionController(Node):
@@ -63,21 +69,34 @@ class MPCVisionController(Node):
         self.current_velocity = np.zeros(3)
         self.obstacles = []  # List of (x, y, z, radius) in NED frame
         self.bridge = CvBridge()
+        self.warned_fallback_pub = False
         
         # Subscribers
-        self.rgb_sub = self.create_subscription(
-            Image, '/camera/rgb', self.rgb_callback, 10)
         self.depth_sub = self.create_subscription(
             Image, '/camera/depth', self.depth_callback, 10)
-        self.odom_sub = self.create_subscription(
-            Odometry, '/fmu/out/vehicle_odometry', self.odometry_callback, 10)
+        if HAS_PX4_MSGS:
+            self.odom_sub = self.create_subscription(
+                VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, 10)
+        else:
+            self.odom_sub = self.create_subscription(
+                Odometry, '/fmu/out/vehicle_odometry', self.odometry_callback, 10)
         
         # Publishers
-        self.cmd_vel_pub = self.create_publisher(
-            TwistStamped, '/fmu/in/setpoint_velocity', 10)
+        self.mpc_traj_pub = self.create_publisher(
+            PoseStamped, '/mpc/trajectory', 10)
+        if HAS_PX4_MSGS:
+            self.traj_setpoint_pub = self.create_publisher(
+                TrajectorySetpoint, '/fmu/in/trajectory_setpoint', 10)
+            self.offboard_mode_pub = self.create_publisher(
+                OffboardControlMode, '/fmu/in/offboard_control_mode', 10)
+            self.cmd_vel_pub = None
+        else:
+            self.traj_setpoint_pub = None
+            self.offboard_mode_pub = None
+            self.cmd_vel_pub = self.create_publisher(
+                TwistStamped, '/fmu/in/setpoint_velocity', 10)
         
         # Vision data
-        self.rgb_image = None
         self.depth_image = None
         self.camera_K = np.array([
             [320, 0, 320],
@@ -87,6 +106,8 @@ class MPCVisionController(Node):
         
         # MPC Timer
         self.mpc_timer = self.create_timer(self.dt, self.mpc_control_loop)
+        if HAS_PX4_MSGS:
+            self.offboard_timer = self.create_timer(0.1, self.publish_offboard_heartbeat)
         
         # MAVSDK drone
         self.drone = None
@@ -94,13 +115,12 @@ class MPCVisionController(Node):
         
         self.get_logger().info('MPC Vision Controller initialized')
         self.get_logger().info(f'Goal: {self.goal}')
-    
-    def rgb_callback(self, msg):
-        """Process RGB camera data"""
-        try:
-            self.rgb_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        except Exception as e:
-            self.get_logger().error(f'RGB conversion error: {e}')
+        if HAS_PX4_MSGS:
+            self.get_logger().info('Publishing PX4 trajectory setpoints to /fmu/in/trajectory_setpoint')
+        else:
+            self.get_logger().warn(
+                'px4_msgs not found in Python env; falling back to /fmu/in/setpoint_velocity'
+            )
     
     def depth_callback(self, msg):
         """Process depth camera data and detect obstacles"""
@@ -208,6 +228,19 @@ class MPCVisionController(Node):
             msg.twist.twist.linear.y,
             msg.twist.twist.linear.z
         ])
+
+    def vehicle_odometry_callback(self, msg):
+        """Update current state from px4_msgs/VehicleOdometry (NED)."""
+        self.current_position = np.array([
+            float(msg.position[0]),
+            float(msg.position[1]),
+            float(msg.position[2]),
+        ])
+        self.current_velocity = np.array([
+            float(msg.velocity[0]),
+            float(msg.velocity[1]),
+            float(msg.velocity[2]),
+        ])
     
     def mpc_control_loop(self):
         """Main MPC control loop"""
@@ -226,7 +259,15 @@ class MPCVisionController(Node):
         optimal_velocity = self.solve_mpc()
         
         if optimal_velocity is not None:
-            self.publish_velocity(optimal_velocity)
+            # Publish MPC trajectory point for comparison/visualization.
+            target_position = self.current_position + optimal_velocity * self.dt
+            self.publish_mpc_trajectory(target_position)
+
+            # Send command on the same PX4 topics as llm_planner.
+            if HAS_PX4_MSGS:
+                self.publish_trajectory_setpoint(target_position)
+            else:
+                self.publish_velocity(optimal_velocity)
             
             self.get_logger().info(
                 f'Pos: [{self.current_position[0]:.2f}, '
@@ -330,16 +371,63 @@ class MPCVisionController(Node):
     
     def publish_velocity(self, velocity):
         """Publish velocity command"""
+        if self.cmd_vel_pub is None:
+            return
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.twist.linear.x = float(velocity[0])
         msg.twist.linear.y = float(velocity[1])
         msg.twist.linear.z = float(velocity[2])
         self.cmd_vel_pub.publish(msg)
+
+        if not self.warned_fallback_pub:
+            self.get_logger().warn(
+                'Using /fmu/in/setpoint_velocity fallback. '
+                'Install px4_msgs to publish /fmu/in/trajectory_setpoint.'
+            )
+            self.warned_fallback_pub = True
+
+    def publish_offboard_heartbeat(self):
+        """Publish OffboardControlMode heartbeat required by PX4 offboard control."""
+        if self.offboard_mode_pub is None:
+            return
+        msg = OffboardControlMode()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.position = True
+        msg.velocity = False
+        msg.acceleration = False
+        self.offboard_mode_pub.publish(msg)
+
+    def publish_trajectory_setpoint(self, target_position):
+        """Publish position setpoint directly to PX4 trajectory setpoint topic."""
+        if self.traj_setpoint_pub is None:
+            return
+        msg = TrajectorySetpoint()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.position = [
+            float(target_position[0]),
+            float(target_position[1]),
+            float(target_position[2]),
+        ]
+        msg.yaw = 0.0
+        self.traj_setpoint_pub.publish(msg)
+
+    def publish_mpc_trajectory(self, position):
+        """Publish MPC next position for comparison with LLM trajectory."""
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        msg.pose.position.x = float(position[0])
+        msg.pose.position.y = float(position[1])
+        msg.pose.position.z = float(position[2])
+        self.mpc_traj_pub.publish(msg)
     
     def publish_zero_velocity(self):
         """Stop the drone"""
-        self.publish_velocity(np.zeros(3))
+        if HAS_PX4_MSGS:
+            self.publish_trajectory_setpoint(self.current_position)
+        else:
+            self.publish_velocity(np.zeros(3))
 
 
 def main(args=None):
