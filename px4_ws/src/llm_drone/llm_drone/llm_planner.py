@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-LLM-based Trajectory Planner using OpenAI GPT-4
+LLM-based Trajectory Planner using open-source LLMs (Qwen/Llama)
 Save as: ros2_ws/src/px4_vision/px4_vision/llm_planner.py
 
 Subscribes to:
   - /fmu/out/vehicle_odometry (drone position)
-  - /camera/depth (Depth image)
+  - /depth_camera/points (PointCloud2)
 
 Publishes to:
   - /llm/trajectory (LLM-generated trajectory)
@@ -17,7 +17,9 @@ Compares with:
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Image, PointCloud2
+from sensor_msgs_py import point_cloud2 as pc2
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TwistStamped, PoseStamped
 from cv_bridge import CvBridge
@@ -27,6 +29,8 @@ import base64
 import json
 from openai import OpenAI
 import os
+import urllib.request
+import urllib.error
 from ament_index_python.packages import get_package_share_directory
 
 try:
@@ -38,19 +42,18 @@ except ImportError:
 
 class LLMTrajectoryPlanner(Node):
     """
-    Uses GPT-4 Vision to generate trajectories based on depth camera input
+    Uses an open-source LLM to generate trajectories from depth camera input
     """
     
     def __init__(self):
         super().__init__('llm_trajectory_planner')
         
-        # OpenAI API setup
-        api_key = os.getenv('OPENAI_API_KEY')
-        if not api_key:
-            self.get_logger().error('OPENAI_API_KEY environment variable not set!')
-            raise ValueError('Set OPENAI_API_KEY before running')
-        
-        self.client = OpenAI(api_key=api_key)
+        # OpenAI setup (disabled for now)
+        # api_key = self._load_openai_key()
+        # if not api_key:
+        #     self.get_logger().error('OpenAI API key not found in env or key file!')
+        #     raise ValueError('Set OPENAI_API_KEY or provide /home/prachit/api_key.txt')
+        # self.client = OpenAI(api_key=api_key)
         
         # Load prompt from file
         prompt_file = self._resolve_prompt_file()
@@ -66,7 +69,10 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('goal_y', 10.0)
         self.declare_parameter('goal_z', -2.0)
         self.declare_parameter('update_rate', 1.0)  # Hz
-        self.declare_parameter('gpt_model', 'gpt-4o')  # gpt-4o has vision
+        self.declare_parameter('llm_provider', 'llama')  # qwen or llama
+        self.declare_parameter('ollama_url', 'http://localhost:11434/api/generate')
+        self.declare_parameter('qwen_model', 'qwen2.5:7b-instruct')
+        self.declare_parameter('llama_model', 'llama3.2:latest')
         
         self.goal = np.array([
             self.get_parameter('goal_x').value,
@@ -89,12 +95,24 @@ class LLMTrajectoryPlanner(Node):
         # Subscribers
         if HAS_PX4_MSGS:
             self.odom_sub = self.create_subscription(
-                VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, 10)
+                VehicleOdometry,
+                '/fmu/out/vehicle_odometry',
+                self.vehicle_odometry_callback,
+                qos_profile_sensor_data,
+            )
         else:
             self.odom_sub = self.create_subscription(
-                Odometry, '/fmu/out/vehicle_odometry', self.odometry_callback, 10)
+                Odometry,
+                '/fmu/out/vehicle_odometry',
+                self.odometry_callback,
+                qos_profile_sensor_data,
+            )
         self.depth_sub = self.create_subscription(
-            Image, '/camera/depth', self.depth_callback, 10)
+            PointCloud2,
+            '/depth_camera/points',
+            self.depth_points_callback,
+            qos_profile_sensor_data,
+        )
         self.mpc_traj_sub = self.create_subscription(
             PoseStamped, '/mpc/trajectory', self.mpc_trajectory_callback, 10)
         
@@ -144,12 +162,97 @@ class LLMTrajectoryPlanner(Node):
         share_path = os.path.join(share_dir, 'config', 'llm_prompt.txt')
         return share_path
     
-    def depth_callback(self, msg):
-        """Store latest depth image"""
+    def _load_openai_key(self):
+        api_key = os.getenv('OPENAI_API_KEY')
+        if api_key:
+            return api_key.strip()
+
+        key_path = os.getenv('LLM_API_KEY_FILE', '/home/prachit/api_key.txt')
         try:
-            self.depth_image = self.bridge.imgmsg_to_cv2(msg, "32FC1")
+            with open(key_path, 'r') as f:
+                text = f.read()
+        except FileNotFoundError:
+            self.get_logger().warn(f'API key file not found: {key_path}')
+            return None
+
+        openai_key, claude_key = self._parse_key_file(text)
+        if claude_key:
+            # Placeholder for future Claude usage; do not log the key.
+            self.claude_api_key = claude_key
+        if openai_key:
+            return openai_key
+
+        self.get_logger().warn('OpenAI key not found in key file')
+        return None
+
+    def _parse_key_file(self, text):
+        """
+        Parse a text file containing OpenAI and Claude keys.
+        Supported formats:
+        - OPENAI_API_KEY=...
+        - CLAUDE_API_KEY=... or ANTHROPIC_API_KEY=...
+        - openai: ... / claude: ...
+        - Two-line fallback (first OpenAI, second Claude)
+        """
+        openai_key = None
+        claude_key = None
+
+        def _clean(val):
+            return val.strip().strip('"').strip("'")
+
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            upper = line.upper()
+            if 'OPENAI' in upper:
+                parts = line.split('=', 1) if '=' in line else line.split(':', 1)
+                if len(parts) == 2:
+                    openai_key = _clean(parts[1])
+                    continue
+            if 'CLAUDE' in upper or 'ANTHROPIC' in upper:
+                parts = line.split('=', 1) if '=' in line else line.split(':', 1)
+                if len(parts) == 2:
+                    claude_key = _clean(parts[1])
+                    continue
+
+        if not openai_key or not claude_key:
+            raw_lines = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith('#')]
+            if len(raw_lines) >= 1 and not openai_key:
+                openai_key = _clean(raw_lines[0])
+            if len(raw_lines) >= 2 and not claude_key:
+                claude_key = _clean(raw_lines[1])
+
+        return openai_key, claude_key
+
+    def depth_points_callback(self, msg):
+        """Store latest depth from PointCloud2; also build a depth image when possible."""
+        try:
+            depth_img = self._pointcloud_to_depth_image(msg)
+            if depth_img is not None:
+                self.depth_image = depth_img
         except Exception as e:
-            self.get_logger().error(f'Depth conversion error: {e}')
+            self.get_logger().error(f'PointCloud2 conversion error: {e}')
+
+    def _pointcloud_to_depth_image(self, msg):
+        """Convert an organized PointCloud2 into a depth image (uses z as depth)."""
+        if msg.height <= 0 or msg.width <= 0:
+            return None
+
+        points = pc2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=False)
+        if points is None or points.size == 0:
+            return None
+
+        if msg.height > 1 and msg.width > 1 and points.shape[0] == msg.height * msg.width:
+            points = points.reshape((msg.height, msg.width, 3))
+            depth = points[:, :, 2].astype(np.float32)
+            depth[np.isinf(depth)] = np.nan
+            return depth
+
+        # Fallback for unorganized clouds: build a 1-row depth "image".
+        depth = points[:, 2].astype(np.float32)
+        depth[np.isinf(depth)] = np.nan
+        return depth.reshape((1, -1))
     
     def odometry_callback(self, msg):
         """Update current state"""
@@ -364,45 +467,16 @@ class LLMTrajectoryPlanner(Node):
             self.get_logger().error(f'LLM query failed: {e}')
     
     def query_llm(self):
-        """Query OpenAI GPT-4 Vision for next waypoint"""
+        """Query open-source LLM (Qwen/Llama) for next waypoint"""
         
         env_vector = self.build_environment_vector()
         env_text = self.translate_vector_to_nlp(env_vector)
 
-        # Encode images
-        depth_colored = self.create_depth_visualization()
-        depth_base64 = self.encode_image(depth_colored)
-        
         # Compose final prompt = fixed prompt + translated environment block + vector
         user_message = self.compose_final_prompt(env_vector, env_text)
-        
-        # Call GPT-4 Vision
-        response = self.client.chat.completions.create(
-            model=self.get_parameter('gpt_model').value,
-            messages=[
-                {
-                    "role": "system",
-                    "content": self.system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_message},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{depth_base64}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=300,
-            temperature=0.3
-        )
-        
-        # Parse response
-        content = response.choices[0].message.content
+
+        # Open-source model call (Qwen enabled by default)
+        content = self.query_open_source_model(user_message)
         self.get_logger().info(f'LLM response: {content}')
         
         # Extract JSON
@@ -441,6 +515,84 @@ class LLMTrajectoryPlanner(Node):
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             self.get_logger().error(f'Failed to parse LLM response: {e}')
             return None
+
+    def query_open_source_model(self, user_message):
+        """
+        Query Ollama-compatible endpoint with either Qwen or Llama prompt style.
+        Qwen is currently selected by default.
+        """
+        provider = str(self.get_parameter('llm_provider').value).strip().lower()
+
+        # Prompt snippet for Llama:
+        llama_prompt = (
+            "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
+            f"{self.system_prompt}\n"
+            "<|eot_id|><|start_header_id|>user<|end_header_id|>\n"
+            f"{user_message}\n"
+            "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n"
+        )
+
+        # Prompt snippet for Qwen (ChatML):
+        qwen_prompt = (
+            "<|im_start|>system\n"
+            f"{self.system_prompt}\n"
+            "<|im_end|>\n"
+            "<|im_start|>user\n"
+            f"{user_message}\n"
+            "<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+
+        # For now keep Qwen active as the open-source model in use.
+        # model_name = self.get_parameter('llama_model').value
+        model_name = self.get_parameter('qwen_model').value
+
+        if provider == 'llama':
+            prompt = llama_prompt
+            model_name = self.get_parameter('llama_model').value
+        else:
+            prompt = qwen_prompt
+
+        payload = {
+            "model": model_name,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 300,
+            },
+        }
+
+        request = urllib.request.Request(
+            url=str(self.get_parameter('ollama_url').value),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        url = str(self.get_parameter('ollama_url').value)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = response.read().decode("utf-8")
+            parsed = json.loads(body)
+            return parsed.get("response", "")
+        except urllib.error.HTTPError as e:
+            error_body = ""
+            try:
+                error_body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                error_body = "<no response body>"
+            self.get_logger().error(
+                "Open-source model request failed "
+                f"(status={e.code}, url={url}, model={model_name}): {error_body}"
+            )
+            raise
+        except urllib.error.URLError as e:
+            self.get_logger().error(
+                "Open-source model request failed "
+                f"(url={url}, model={model_name}): {e}"
+            )
+            raise
 
     def compose_final_prompt(self, env_vector, env_text):
         """Build final prompt from fixed instructions + dynamic environment section."""
@@ -553,16 +705,21 @@ Return only one JSON object with keys:
 
 def main(args=None):
     rclpy.init(args=args)
-    
-    node = LLMTrajectoryPlanner()
-    
+
+    node = None
     try:
+        node = LLMTrajectoryPlanner()
         rclpy.spin(node)
+    except rclpy.executors.ExternalShutdownException:
+        # Context has already been shutdown externally.
+        pass
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        if node is not None:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

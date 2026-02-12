@@ -12,6 +12,7 @@ Author: Vision MPC Controller
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
@@ -70,16 +71,38 @@ class MPCVisionController(Node):
         self.obstacles = []  # List of (x, y, z, radius) in NED frame
         self.bridge = CvBridge()
         self.warned_fallback_pub = False
+        self.warned_solver = False
+
+        # Prefer conic solvers for SOC constraints (norm <= vmax)
+        self.available_solvers = cp.installed_solvers()
+        if 'ECOS' in self.available_solvers:
+            self.conic_solver = cp.ECOS
+        elif 'SCS' in self.available_solvers:
+            self.conic_solver = cp.SCS
+        else:
+            self.conic_solver = None
+            self.get_logger().error(
+                'No conic solver available to CVXPY. '
+                'Install ECOS or SCS (python3-ecos or python3-scs).'
+            )
+
+        # PX4 uORB -> ROS 2 typically uses best-effort, volatile QoS
+        self.odom_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
         
         # Subscribers
         self.depth_sub = self.create_subscription(
             Image, '/camera/depth', self.depth_callback, 10)
         if HAS_PX4_MSGS:
             self.odom_sub = self.create_subscription(
-                VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, 10)
+                VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, self.odom_qos)
         else:
             self.odom_sub = self.create_subscription(
-                Odometry, '/fmu/out/vehicle_odometry', self.odometry_callback, 10)
+                Odometry, '/fmu/out/vehicle_odometry', self.odometry_callback, self.odom_qos)
         
         # Publishers
         self.mpc_traj_pub = self.create_publisher(
@@ -352,7 +375,15 @@ class MPCVisionController(Node):
         problem = cp.Problem(cp.Minimize(cost), constraints)
         
         try:
-            problem.solve(solver=cp.OSQP, verbose=False, warm_start=True)
+            if self.conic_solver is None:
+                if not self.warned_solver:
+                    self.get_logger().error(
+                        f'CVXPY conic solver missing. Installed solvers: {self.available_solvers}'
+                    )
+                    self.warned_solver = True
+                return None
+
+            problem.solve(solver=self.conic_solver, verbose=False, warm_start=True)
             
             if problem.status == cp.OPTIMAL or problem.status == cp.OPTIMAL_INACCURATE:
                 # Return first control action
