@@ -24,6 +24,10 @@ fi
 
 # Load PX4's Gazebo env if available (resource/plugin paths).
 if [[ -f "${PX4_DIR}/build/px4_sitl_default/rootfs/gz_env.sh" ]]; then
+  # Prevent nounset failures in gz_env.sh when these vars are unset.
+  export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}"
+  export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
+  export GZ_SIM_SERVER_CONFIG_PATH="${GZ_SIM_SERVER_CONFIG_PATH:-}"
   # shellcheck disable=SC1091
   source "${PX4_DIR}/build/px4_sitl_default/rootfs/gz_env.sh"
 fi
@@ -59,4 +63,5 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "Launching PX4 SITL in standalone mode (x500 in obstacle_avoidance world)"
-PX4_GZ_STANDALONE=1 make -C "${PX4_DIR}" px4_sitl gz_x500
+echo "Using PX4_SIM_MODEL=${PX4_SIM_MODEL}"
+PX4_GZ_STANDALONE=1 make -C "${PX4_DIR}" px4_sitl "${PX4_SIM_MODEL}"
