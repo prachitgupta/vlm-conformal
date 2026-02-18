@@ -29,9 +29,9 @@ def generate_launch_description():
         description='Run Gazebo headless'
     )
     
-    goal_x = DeclareLaunchArgument('goal_x', default_value='15.0')
-    goal_y = DeclareLaunchArgument('goal_y', default_value='10.0')
-    goal_z = DeclareLaunchArgument('goal_z', default_value='-2.0')
+    goal_x = DeclareLaunchArgument('goal_x', default_value='35.0')
+    goal_y = DeclareLaunchArgument('goal_y', default_value='3.0')
+    goal_z = DeclareLaunchArgument('goal_z', default_value='2.5')
     
     # PX4 SITL
     px4_sitl = ExecuteProcess(

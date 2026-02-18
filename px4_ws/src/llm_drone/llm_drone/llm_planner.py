@@ -5,7 +5,7 @@ Save as: ros2_ws/src/px4_vision/px4_vision/llm_planner.py
 
 Subscribes to:
   - /fmu/out/vehicle_odometry (drone position)
-  - /depth_camera/points (PointCloud2)
+  - /depth_camera (Image)
 
 Publishes to:
   - /llm/trajectory (LLM-generated trajectory)
@@ -18,8 +18,7 @@ Compares with:
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image, PointCloud2
-from sensor_msgs_py import point_cloud2 as pc2
+from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TwistStamped, PoseStamped
 from cv_bridge import CvBridge
@@ -32,6 +31,7 @@ import os
 import urllib.request
 import urllib.error
 from ament_index_python.packages import get_package_share_directory
+from llm_drone.cli_goal import parse_goal_overrides
 
 try:
     from px4_msgs.msg import TrajectorySetpoint, OffboardControlMode, VehicleOdometry
@@ -45,7 +45,7 @@ class LLMTrajectoryPlanner(Node):
     Uses an open-source LLM to generate trajectories from depth camera input
     """
     
-    def __init__(self):
+    def __init__(self, goal_override=None):
         super().__init__('llm_trajectory_planner')
         
         # OpenAI setup (disabled for now)
@@ -65,28 +65,52 @@ class LLMTrajectoryPlanner(Node):
             self.system_prompt = self._get_default_prompt()
         
         # Parameters
-        self.declare_parameter('goal_x', 15.0)
-        self.declare_parameter('goal_y', 10.0)
-        self.declare_parameter('goal_z', -2.0)
+        self.declare_parameter('goal_x', 35.0)
+        self.declare_parameter('goal_y', 3.0)
+        self.declare_parameter('goal_z', 2.5)
         self.declare_parameter('update_rate', 1.0)  # Hz
         self.declare_parameter('llm_provider', 'llama')  # qwen or llama
         self.declare_parameter('ollama_url', 'http://localhost:11434/api/generate')
         self.declare_parameter('qwen_model', 'qwen2.5:7b-instruct')
         self.declare_parameter('llama_model', 'llama3.2:latest')
+        self.declare_parameter('goal_frame', 'ned')  # gazebo(ENU) or ned
+        self.declare_parameter('obstacle_threshold', 2.5)  # meters
+        self.declare_parameter('obstacle_sample_step', 20)
         
-        self.goal = np.array([
+        goal_input = np.array([
             self.get_parameter('goal_x').value,
             self.get_parameter('goal_y').value,
             self.get_parameter('goal_z').value
         ])
+        goal_frame = str(self.get_parameter('goal_frame').value).strip().lower()
+        self.goal = self.convert_goal_to_ned(goal_input, goal_frame)
+        if goal_override is not None:
+            self.goal = np.array(goal_override, dtype=float)
         
         # State
         self.current_position = np.zeros(3)
         self.current_velocity = np.zeros(3)
+        self.rotation_ned_body = np.eye(3)
         self.depth_image = None
+        self.obstacles_ned = []
         self.last_environment_vector = None
         self.bridge = CvBridge()
         self.warned_fallback_pub = False
+        self.obs_threshold = float(self.get_parameter('obstacle_threshold').value)
+        self.obstacle_sample_step = int(self.get_parameter('obstacle_sample_step').value)
+
+        # Match MPC camera projection for depth->NED obstacle mapping.
+        self.camera_K = np.array([
+            [432.496042035043, 0.0, 319.5],
+            [0.0, 432.496042035043, 239.5],
+            [0, 0, 1]
+        ], dtype=float)
+        self.rotation_body_camera = np.array([
+            [0.0, 0.0, 1.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ], dtype=float)
+        self.translation_body_camera_m = np.array([0.13233, 0.0, 0.26078], dtype=float)
         
         # Trajectory storage
         self.llm_trajectory = []
@@ -108,9 +132,9 @@ class LLMTrajectoryPlanner(Node):
                 qos_profile_sensor_data,
             )
         self.depth_sub = self.create_subscription(
-            PointCloud2,
-            '/depth_camera/points',
-            self.depth_points_callback,
+            Image,
+            '/depth_camera',
+            self.depth_image_callback,
             qos_profile_sensor_data,
         )
         self.mpc_traj_sub = self.create_subscription(
@@ -225,34 +249,17 @@ class LLMTrajectoryPlanner(Node):
 
         return openai_key, claude_key
 
-    def depth_points_callback(self, msg):
-        """Store latest depth from PointCloud2; also build a depth image when possible."""
+    def depth_image_callback(self, msg):
+        """Store latest depth image from sensor_msgs/msg/Image."""
         try:
-            depth_img = self._pointcloud_to_depth_image(msg)
-            if depth_img is not None:
-                self.depth_image = depth_img
+            if msg.encoding in ('16UC1', 'mono16'):
+                depth_mm = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+                self.depth_image = depth_mm.astype(np.float32) / 1000.0
+            else:
+                self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
+            self.obstacles_ned = self.detect_obstacles_in_ned()
         except Exception as e:
-            self.get_logger().error(f'PointCloud2 conversion error: {e}')
-
-    def _pointcloud_to_depth_image(self, msg):
-        """Convert an organized PointCloud2 into a depth image (uses z as depth)."""
-        if msg.height <= 0 or msg.width <= 0:
-            return None
-
-        points = pc2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=False)
-        if points is None or points.size == 0:
-            return None
-
-        if msg.height > 1 and msg.width > 1 and points.shape[0] == msg.height * msg.width:
-            points = points.reshape((msg.height, msg.width, 3))
-            depth = points[:, :, 2].astype(np.float32)
-            depth[np.isinf(depth)] = np.nan
-            return depth
-
-        # Fallback for unorganized clouds: build a 1-row depth "image".
-        depth = points[:, 2].astype(np.float32)
-        depth[np.isinf(depth)] = np.nan
-        return depth.reshape((1, -1))
+            self.get_logger().error(f'Depth image conversion error: {e}')
     
     def odometry_callback(self, msg):
         """Update current state"""
@@ -266,6 +273,10 @@ class LLMTrajectoryPlanner(Node):
             msg.twist.twist.linear.y,
             msg.twist.twist.linear.z
         ])
+        q = msg.pose.pose.orientation
+        self.rotation_ned_body = self.quaternion_to_rotation_matrix(
+            q.w, q.x, q.y, q.z
+        )
 
     def vehicle_odometry_callback(self, msg):
         """Update current state from px4_msgs/VehicleOdometry (NED)."""
@@ -279,6 +290,54 @@ class LLMTrajectoryPlanner(Node):
             float(msg.velocity[1]),
             float(msg.velocity[2]),
         ])
+        self.rotation_ned_body = self.quaternion_to_rotation_matrix(
+            float(msg.q[0]),
+            float(msg.q[1]),
+            float(msg.q[2]),
+            float(msg.q[3]),
+        )
+
+    @staticmethod
+    def quaternion_to_rotation_matrix(w, x, y, z):
+        """Convert quaternion (w, x, y, z) to a 3x3 rotation matrix."""
+        n = np.sqrt(w * w + x * x + y * y + z * z)
+        if n < 1e-9:
+            return np.eye(3)
+        w, x, y, z = w / n, x / n, y / n, z / n
+        return np.array([
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+        ], dtype=float)
+
+    @staticmethod
+    def convert_goal_to_ned(goal, goal_frame):
+        """Convert user goal to local NED; gazebo/map assumed ENU."""
+        g = np.array(goal, dtype=float)
+        if goal_frame in ('gazebo', 'gazebo_enu', 'enu', 'map'):
+            return np.array([g[1], g[0], -g[2]], dtype=float)
+        return g
+
+    def detect_obstacles_in_ned(self):
+        """Project sparse depth samples to NED and keep nearby obstacle points."""
+        if self.depth_image is None:
+            return []
+        h, w = self.depth_image.shape
+        step = max(1, int(self.obstacle_sample_step))
+        obstacles = []
+        for v in range(0, h, step):
+            for u in range(0, w, step):
+                depth = self.depth_image[v, u]
+                if depth < 0.5 or depth > self.obs_threshold or not np.isfinite(depth):
+                    continue
+                x_cam = (u - self.camera_K[0, 2]) * depth / self.camera_K[0, 0]
+                y_cam = (v - self.camera_K[1, 2]) * depth / self.camera_K[1, 1]
+                z_cam = depth
+                point_cam = np.array([x_cam, y_cam, z_cam], dtype=float)
+                point_body = self.rotation_body_camera @ point_cam + self.translation_body_camera_m
+                point_ned = self.current_position + self.rotation_ned_body @ point_body
+                obstacles.append(point_ned)
+        return obstacles
     
     def mpc_trajectory_callback(self, msg):
         """Store MPC trajectory for comparison"""
@@ -316,6 +375,9 @@ class LLMTrajectoryPlanner(Node):
         """
         if self.depth_image is None:
             return None
+
+        if len(self.obstacles_ned) == 0:
+            self.obstacles_ned = self.detect_obstacles_in_ned()
 
         depth = self.depth_image
         valid_depth = depth[np.isfinite(depth)]
@@ -357,6 +419,19 @@ class LLMTrajectoryPlanner(Node):
         speed = float(np.linalg.norm(self.current_velocity))
         heading_to_goal_xy = float(np.arctan2(goal_delta[1], goal_delta[0]))
 
+        if self.obstacles_ned:
+            obs = np.array(self.obstacles_ned, dtype=float)
+            rel = obs - self.current_position
+            dists = np.linalg.norm(rel, axis=1)
+            nearest_idx = int(np.argmin(dists))
+            nearest_dist_ned = float(dists[nearest_idx])
+            nearest_point_ned = [float(x) for x in obs[nearest_idx]]
+            nearest_vec_ned = [float(x) for x in rel[nearest_idx]]
+        else:
+            nearest_dist_ned = 20.0
+            nearest_point_ned = [float(self.current_position[0]), float(self.current_position[1]), float(self.current_position[2])]
+            nearest_vec_ned = [20.0, 0.0, 0.0]
+
         vector = {
             "current_position_ned_m": [float(x) for x in self.current_position],
             "current_velocity_mps": [float(v) for v in self.current_velocity],
@@ -365,6 +440,12 @@ class LLMTrajectoryPlanner(Node):
             "distance_to_goal_m": dist_to_goal,
             "speed_mps": speed,
             "heading_to_goal_xy_rad": heading_to_goal_xy,
+            "obstacle_features_ned": {
+                "sample_count": int(len(self.obstacles_ned)),
+                "nearest_obstacle_distance_ned_m": nearest_dist_ned,
+                "nearest_obstacle_position_ned_m": nearest_point_ned,
+                "nearest_obstacle_relative_ned_m": nearest_vec_ned,
+            },
             "depth_features": {
                 "valid_fraction": depth_valid_fraction,
                 "global_min_m": global_min,
@@ -391,6 +472,7 @@ class LLMTrajectoryPlanner(Node):
         vel = vector["current_velocity_mps"]
         g = vector["goal_position_ned_m"]
         d = vector["goal_delta_m"]
+        obs_ned = vector["obstacle_features_ned"]
         depth = vector["depth_features"]
         mins = depth["sector_min_m"]
 
@@ -408,6 +490,12 @@ class LLMTrajectoryPlanner(Node):
             f"- Current velocity is ({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f}) m/s (speed {vector['speed_mps']:.2f} m/s).\n"
             f"- Goal position NED is ({g[0]:.2f}, {g[1]:.2f}, {g[2]:.2f}) m.\n"
             f"- Goal delta from current state is ({d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}) m with distance {vector['distance_to_goal_m']:.2f} m.\n"
+            f"- NED obstacle samples: {obs_ned['sample_count']} points. "
+            f"Nearest obstacle in NED is at ({obs_ned['nearest_obstacle_position_ned_m'][0]:.2f}, "
+            f"{obs_ned['nearest_obstacle_position_ned_m'][1]:.2f}, {obs_ned['nearest_obstacle_position_ned_m'][2]:.2f}) m, "
+            f"relative vector ({obs_ned['nearest_obstacle_relative_ned_m'][0]:.2f}, "
+            f"{obs_ned['nearest_obstacle_relative_ned_m'][1]:.2f}, {obs_ned['nearest_obstacle_relative_ned_m'][2]:.2f}) m, "
+            f"distance {obs_ned['nearest_obstacle_distance_ned_m']:.2f} m.\n"
             f"- Depth validity fraction is {depth['valid_fraction']:.2f}. Global nearest obstacle distance is {depth['global_min_m']:.2f} m.\n"
             f"- Sector minimum distances [far_left, left, center, right, far_right] are "
             f"[{mins['far_left']:.2f}, {mins['left']:.2f}, {mins['center']:.2f}, {mins['right']:.2f}, {mins['far_right']:.2f}] m.\n"
@@ -704,11 +792,12 @@ Return only one JSON object with keys:
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    goal_override, ros_args = parse_goal_overrides(args)
+    rclpy.init(args=ros_args)
 
     node = None
     try:
-        node = LLMTrajectoryPlanner()
+        node = LLMTrajectoryPlanner(goal_override=goal_override)
         rclpy.spin(node)
     except rclpy.executors.ExternalShutdownException:
         # Context has already been shutdown externally.
