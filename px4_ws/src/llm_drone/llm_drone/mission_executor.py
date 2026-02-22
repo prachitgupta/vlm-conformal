@@ -58,7 +58,7 @@ class MissionExecutor:
         
         return False
     
-    async def arm_and_takeoff(self, altitude=2.5):
+    async def arm_and_takeoff(self, altitude=1.5):
         """Arm and takeoff"""
         print(f"\n🚁 Arming and taking off to {altitude}m...")
         

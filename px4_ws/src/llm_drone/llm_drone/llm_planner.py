@@ -5,7 +5,8 @@ Save as: ros2_ws/src/px4_vision/px4_vision/llm_planner.py
 
 Subscribes to:
   - /fmu/out/vehicle_odometry (drone position)
-  - /depth_camera (Image)
+  - /depth_camera (Image, for LLM visualization/features)
+  - /depth_camera/points (PointCloud2, for obstacle detection)
 
 Publishes to:
   - /llm/trajectory (LLM-generated trajectory)
@@ -18,9 +19,10 @@ Compares with:
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, PointCloud2
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TwistStamped, PoseStamped
+from sensor_msgs_py import point_cloud2 as pc2
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -69,11 +71,13 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('goal_y', 3.0)
         self.declare_parameter('goal_z', 2.5)
         self.declare_parameter('update_rate', 1.0)  # Hz
-        self.declare_parameter('llm_provider', 'llama')  # qwen or llama
+        # Default to a lighter local Qwen model for on-device/self-hosted use.
+        self.declare_parameter('llm_provider', 'qwen')  # qwen or llama
         self.declare_parameter('ollama_url', 'http://localhost:11434/api/generate')
-        self.declare_parameter('qwen_model', 'qwen2.5:7b-instruct')
+        self.declare_parameter('qwen_model', 'qwen2.5:3b-instruct')
         self.declare_parameter('llama_model', 'llama3.2:latest')
         self.declare_parameter('goal_frame', 'ned')  # gazebo(ENU) or ned
+        self.declare_parameter('pointcloud_topic', '/depth_camera/points')
         self.declare_parameter('obstacle_threshold', 2.5)  # meters
         self.declare_parameter('obstacle_sample_step', 20)
         
@@ -98,6 +102,7 @@ class LLMTrajectoryPlanner(Node):
         self.warned_fallback_pub = False
         self.obs_threshold = float(self.get_parameter('obstacle_threshold').value)
         self.obstacle_sample_step = int(self.get_parameter('obstacle_sample_step').value)
+        self.pointcloud_topic = str(self.get_parameter('pointcloud_topic').value)
 
         # Match MPC camera projection for depth->NED obstacle mapping.
         self.camera_K = np.array([
@@ -137,6 +142,12 @@ class LLMTrajectoryPlanner(Node):
             self.depth_image_callback,
             qos_profile_sensor_data,
         )
+        self.pointcloud_sub = self.create_subscription(
+            PointCloud2,
+            self.pointcloud_topic,
+            self.pointcloud_callback,
+            qos_profile_sensor_data,
+        )
         self.mpc_traj_sub = self.create_subscription(
             PoseStamped, '/mpc/trajectory', self.mpc_trajectory_callback, 10)
         
@@ -164,6 +175,7 @@ class LLMTrajectoryPlanner(Node):
         
         self.get_logger().info('LLM Trajectory Planner initialized')
         self.get_logger().info(f'Goal: {self.goal}')
+        self.get_logger().info(f'Pointcloud obstacle topic: {self.pointcloud_topic}')
         if HAS_PX4_MSGS:
             self.get_logger().info('Publishing PX4 trajectory setpoints to /fmu/in/trajectory_setpoint')
         else:
@@ -257,9 +269,12 @@ class LLMTrajectoryPlanner(Node):
                 self.depth_image = depth_mm.astype(np.float32) / 1000.0
             else:
                 self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
-            self.obstacles_ned = self.detect_obstacles_in_ned()
         except Exception as e:
             self.get_logger().error(f'Depth image conversion error: {e}')
+
+    def pointcloud_callback(self, msg):
+        """Update NED obstacle samples from depth pointcloud (same mapping as MPC)."""
+        self.obstacles_ned = self.detect_obstacles_in_ned(msg)
     
     def odometry_callback(self, msg):
         """Update current state"""
@@ -318,25 +333,27 @@ class LLMTrajectoryPlanner(Node):
             return np.array([g[1], g[0], -g[2]], dtype=float)
         return g
 
-    def detect_obstacles_in_ned(self):
-        """Project sparse depth samples to NED and keep nearby obstacle points."""
-        if self.depth_image is None:
-            return []
-        h, w = self.depth_image.shape
-        step = max(1, int(self.obstacle_sample_step))
+    def detect_obstacles_in_ned(self, pointcloud_msg):
+        """Project pointcloud samples to NED and keep nearby obstacle points."""
         obstacles = []
-        for v in range(0, h, step):
-            for u in range(0, w, step):
-                depth = self.depth_image[v, u]
-                if depth < 0.5 or depth > self.obs_threshold or not np.isfinite(depth):
-                    continue
-                x_cam = (u - self.camera_K[0, 2]) * depth / self.camera_K[0, 0]
-                y_cam = (v - self.camera_K[1, 2]) * depth / self.camera_K[1, 1]
-                z_cam = depth
-                point_cam = np.array([x_cam, y_cam, z_cam], dtype=float)
-                point_body = self.rotation_body_camera @ point_cam + self.translation_body_camera_m
-                point_ned = self.current_position + self.rotation_ned_body @ point_body
-                obstacles.append(point_ned)
+        stride = max(1, int(self.obstacle_sample_step))
+        for i, (x_cam, y_cam, z_cam) in enumerate(
+            pc2.read_points(pointcloud_msg, field_names=('x', 'y', 'z'), skip_nans=True)
+        ):
+            if i % stride != 0:
+                continue
+            if not (np.isfinite(x_cam) and np.isfinite(y_cam) and np.isfinite(z_cam)):
+                continue
+            point_cam = np.array([x_cam, y_cam, z_cam], dtype=float)
+            point_body = self.rotation_body_camera @ point_cam + self.translation_body_camera_m
+            if not np.all(np.isfinite(point_body)):
+                continue
+            point_ned = self.current_position + self.rotation_ned_body @ point_body
+            if not np.all(np.isfinite(point_ned)):
+                continue
+            if np.linalg.norm(point_ned - self.current_position) > self.obs_threshold:
+                continue
+            obstacles.append(point_ned)
         return obstacles
     
     def mpc_trajectory_callback(self, msg):
@@ -375,9 +392,6 @@ class LLMTrajectoryPlanner(Node):
         """
         if self.depth_image is None:
             return None
-
-        if len(self.obstacles_ned) == 0:
-            self.obstacles_ned = self.detect_obstacles_in_ned()
 
         depth = self.depth_image
         valid_depth = depth[np.isfinite(depth)]

@@ -119,6 +119,7 @@ setup(
         'llm_voxl = llm_drone.voxl_llm_planner:main',
         'performance_analyzer = llm_drone.performance_analyse:main',
         'dataset_generator = llm_drone.dataset_generator:main',
+        'debug_pointcloud_obstacles = llm_drone.debug_pointcloud_obstacles:main',
         ],
     },
     cmdclass={

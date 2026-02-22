@@ -13,13 +13,11 @@ Author: Vision MPC Controller
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import PointCloud2
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
-from cv_bridge import CvBridge
+from sensor_msgs_py import point_cloud2 as pc2
 import numpy as np
-import argparse
-import sys
 import cvxpy as cp
 from scipy.spatial import distance
 import matplotlib.pyplot as plt
@@ -36,22 +34,22 @@ class MPCVisionController(Node):
     MPC Controller with Vision-based Obstacle Avoidance
     """
     
-    def __init__(self, obstacle_override=None):
+    def __init__(self):
         super().__init__('mpc_vision_controller')
         
         # Parameters
         self.declare_parameter('goal_x', 35.00)
         self.declare_parameter('goal_y', 0.00)
         self.declare_parameter('goal_z', 2.0)  # Gazebo frame (negative = up)
+        self.declare_parameter('pointcloud_topic', '/depth_camera/points')
         self.declare_parameter('goal_frame', 'gazebo')  # gazebo(ENU) or ned
         self.declare_parameter('prediction_horizon', 10)
         self.declare_parameter('control_horizon', 5)
         self.declare_parameter('dt', 0.55)
-        self.declare_parameter('max_velocity', 1.2)
-        self.declare_parameter('max_control_slew', 0.35)  # m/s change per MPC step
+        self.declare_parameter('max_velocity', 5)
+        self.declare_parameter('max_control_slew', 0.5)  # m/s change per MPC step
         self.declare_parameter('obstacle_threshold', 2.5)  # meters
         self.declare_parameter('safety_distance', 1.5)  # meters
-        self.declare_parameter('enable_obstacle_avoidance', False)
         self.declare_parameter('position_setpoint_lookahead_base_s', 0.5)
         self.declare_parameter('position_setpoint_lookahead_gain', 0.05)
         self.declare_parameter('position_setpoint_lookahead_min_s', 0.2)
@@ -70,6 +68,7 @@ class MPCVisionController(Node):
             self.get_parameter('goal_y').value,
             self.get_parameter('goal_z').value
         ])
+        self.pointcloud_topic = str(self.get_parameter('pointcloud_topic').value)
         self.goal_frame = str(self.get_parameter('goal_frame').value).strip().lower()
         self.goal = self.convert_goal_to_ned(self.goal_input, self.goal_frame)
         
@@ -80,11 +79,7 @@ class MPCVisionController(Node):
         self.max_control_slew = self.get_parameter('max_control_slew').value
         self.obs_threshold = self.get_parameter('obstacle_threshold').value
         self.safety_dist = self.get_parameter('safety_distance').value
-        self.enable_obstacle_avoidance = bool(
-            self.get_parameter('enable_obstacle_avoidance').value
-        )
-        if obstacle_override is not None:
-            self.enable_obstacle_avoidance = bool(obstacle_override)
+        self.enable_obstacle_avoidance = True
         self.lookahead_base = self.get_parameter('position_setpoint_lookahead_base_s').value
         self.lookahead_gain = self.get_parameter('position_setpoint_lookahead_gain').value
         self.lookahead_min = self.get_parameter('position_setpoint_lookahead_min_s').value
@@ -120,7 +115,6 @@ class MPCVisionController(Node):
         self.current_yaw = 0.0
         self.rotation_ned_body = np.eye(3)
         self.obstacles = []  # List of (x, y, z, radius) in NED frame
-        self.bridge = CvBridge()
         self.warned_fallback_pub = False
         self.warned_solver = False
         self.prev_velocity_cmd = np.zeros(3)
@@ -171,7 +165,7 @@ class MPCVisionController(Node):
         
         # Subscribers
         self.depth_sub = self.create_subscription(
-            Image, '/camera/depth', self.depth_callback, 10)
+            PointCloud2, self.pointcloud_topic, self.pointcloud_callback, 10)
         if HAS_PX4_MSGS:
             self.odom_sub = self.create_subscription(
                 VehicleOdometry, '/fmu/out/vehicle_odometry', self.vehicle_odometry_callback, self.odom_qos)
@@ -194,15 +188,7 @@ class MPCVisionController(Node):
             self.cmd_vel_pub = self.create_publisher(
                 TwistStamped, '/fmu/in/setpoint_velocity', 10)
         
-        # Vision data
-        self.depth_image = None
-        # x500_depth (OakD-Lite StereoOV7251 depth sensor) intrinsics from SDF:
-        # width=640, height=480, horizontal_fov=1.274 rad -> fx=fy=432.496
-        self.camera_K = np.array([
-            [432.496042035043, 0.0, 319.5],
-            [0.0, 432.496042035043, 239.5],
-            [0, 0, 1]
-        ], dtype=float)
+        # Vision data (PointCloud2 in camera frame)
         # Camera optical -> body (FRD/NED-aligned body axes).
         # Preserves previous mapping: x_body=z_cam, y_body=-x_cam, z_body=-y_cam
         self.rotation_body_camera = np.array([
@@ -230,6 +216,7 @@ class MPCVisionController(Node):
         self.get_logger().info(
             f'Obstacle avoidance enabled: {self.enable_obstacle_avoidance}'
         )
+        self.get_logger().info(f'Pointcloud topic: {self.pointcloud_topic}')
         self.setup_live_plot()
         if HAS_PX4_MSGS:
             self.get_logger().info('Publishing PX4 trajectory setpoints to /fmu/in/trajectory_setpoint')
@@ -238,44 +225,34 @@ class MPCVisionController(Node):
                 'px4_msgs not found in Python env; falling back to /fmu/in/setpoint_velocity'
             )
     
-    def depth_callback(self, msg):
-        """Update obstacle list from depth image when enabled."""
-        if not self.enable_obstacle_avoidance:
-            self.obstacles = []
-            return
-
+    def pointcloud_callback(self, msg):
+        """Update obstacle list from depth pointcloud when enabled."""
         try:
-            self.depth_image = self.bridge.imgmsg_to_cv2(msg, "32FC1")
-            self.detect_obstacles_from_depth()
+            self.detect_obstacles_from_pointcloud(msg)
         except Exception as e:
-            self.get_logger().error(f'Depth conversion error: {e}')
+            self.get_logger().error(f'Pointcloud processing error: {e}')
     
-    def detect_obstacles_from_depth(self):
-        """Build obstacle clusters from the current depth frame."""
-        if self.depth_image is None:
-            return
-        
-        h, w = self.depth_image.shape
+    def detect_obstacles_from_pointcloud(self, msg):
+        """Transform cloud points camera->body->NED and cluster occupied points."""
         obstacles = []
-        
-        step = 20
-        for v in range(0, h, step):
-            for u in range(0, w, step):
-                depth = self.depth_image[v, u]
-                
-                if depth < 0.5 or depth > self.obs_threshold or not np.isfinite(depth):
-                    continue
-                
-                x_cam = (u - self.camera_K[0, 2]) * depth / self.camera_K[0, 0]
-                y_cam = (v - self.camera_K[1, 2]) * depth / self.camera_K[1, 1]
-                z_cam = depth
+        valid_points = 0
 
-                point_cam = np.array([x_cam, y_cam, z_cam], dtype=float)
-                point_body = (
-                    self.rotation_body_camera @ point_cam + self.translation_body_camera_m
-                )
-                point_ned = self.current_position + self.rotation_ned_body @ point_body
-                obstacles.append(point_ned.tolist())
+        for x_cam, y_cam, z_cam in pc2.read_points(
+            msg, field_names=('x', 'y', 'z'), skip_nans=True
+        ):
+            valid_points += 1
+            if not (np.isfinite(x_cam) and np.isfinite(y_cam) and np.isfinite(z_cam)):
+                continue
+            point_cam = np.array([x_cam, y_cam, z_cam], dtype=float)
+            point_body = self.rotation_body_camera @ point_cam + self.translation_body_camera_m
+            if not np.all(np.isfinite(point_body)):
+                continue
+            point_ned = self.current_position + self.rotation_ned_body @ point_body
+            if not np.all(np.isfinite(point_ned)):
+                continue
+            if np.linalg.norm(point_ned - self.current_position) > self.obs_threshold:
+                continue
+            obstacles.append(point_ned.tolist())
         
         if len(obstacles) > 0:
             obstacles = np.array(obstacles)
@@ -306,9 +283,17 @@ class MPCVisionController(Node):
                 'Obstacles: none',
                 throttle_duration_sec=self.obstacle_log_throttle_s
             )
+        self.get_logger().info(
+            f'Pointcloud processed: points={valid_points}, clusters={len(self.obstacles)}',
+            throttle_duration_sec=self.obstacle_log_throttle_s
+        )
     
     def cluster_obstacles(self, points, radius=0.5):
         """Cluster obstacle points into spheres."""
+        if len(points) == 0:
+            return []
+        points = np.asarray(points, dtype=float)
+        points = points[np.all(np.isfinite(points), axis=1)]
         if len(points) == 0:
             return []
         
@@ -320,12 +305,18 @@ class MPCVisionController(Node):
                 continue
             
             distances = distance.cdist([points[i]], points)[0]
+            distances = np.where(np.isfinite(distances), distances, np.inf)
             cluster_mask = distances < radius
             cluster_points = points[cluster_mask]
+            if len(cluster_points) == 0:
+                used[i] = True
+                continue
             
             used[cluster_mask] = True
             
             center = np.mean(cluster_points, axis=0)
+            if not np.all(np.isfinite(center)):
+                continue
             max_dist = np.max(distance.cdist([center], cluster_points)[0])
             
             clusters.append((center[0], center[1], center[2], max_dist + 0.3))
@@ -420,14 +411,7 @@ class MPCVisionController(Node):
         solve_result = self.solve_mpc()
         mode = solve_result['mode']
 
-        if not self.enable_obstacle_avoidance:
-            self.stop_infeasible_recovery()
-
-        if (
-            mode == 'infeasible'
-            and self.enable_obstacle_avoidance
-            and self.enable_infeasible_yaw_recovery
-        ):
+        if mode == 'infeasible' and self.enable_infeasible_yaw_recovery:
             if HAS_PX4_MSGS:
                 target_position, target_yaw = self.get_infeasible_recovery_setpoint()
                 self.latched_target_position = np.array(target_position, dtype=float)
@@ -560,8 +544,7 @@ class MPCVisionController(Node):
                     cp.norm(u[:, k] - u[:, k-1], 2) <= self.max_control_slew
                 )
         
-        if self.enable_obstacle_avoidance:
-            self.add_obstacle_constraints(constraints, x)
+        self.add_obstacle_constraints(constraints, x)
         
         problem = cp.Problem(cp.Minimize(cost), constraints)
         
@@ -809,50 +792,9 @@ class MPCVisionController(Node):
         plt.pause(0.001)
 
 
-def parse_obstacle_override(args):
-    """
-    Parse optional obstacle-avoidance CLI flags while preserving ROS args.
-
-    Supported forms:
-      --enable_obstacle
-      --enable_obstacle true|false
-      --disable_obstacle
-    """
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument(
-        '--enable_obstacle',
-        nargs='?',
-        const='true',
-        default=None,
-        metavar='[true|false]',
-    )
-    parser.add_argument('--disable_obstacle', action='store_true')
-    known, remaining = parser.parse_known_args(args)
-
-    obstacle_override = None
-    if known.enable_obstacle is not None:
-        text = str(known.enable_obstacle).strip().lower()
-        if text in ('1', 'true', 'yes', 'on'):
-            obstacle_override = True
-        elif text in ('0', 'false', 'no', 'off'):
-            obstacle_override = False
-        else:
-            raise ValueError(
-                f"Invalid value for --enable_obstacle: '{known.enable_obstacle}'. "
-                "Use true/false."
-            )
-    if known.disable_obstacle:
-        obstacle_override = False
-
-    return obstacle_override, remaining
-
-
 def main(args=None):
-    argv = list(sys.argv[1:] if args is None else args)
-    obstacle_override, ros_args = parse_obstacle_override(argv)
-    rclpy.init(args=ros_args)
-    
-    controller = MPCVisionController(obstacle_override=obstacle_override)
+    rclpy.init(args=args)
+    controller = MPCVisionController()
     
     try:
         rclpy.spin(controller)
