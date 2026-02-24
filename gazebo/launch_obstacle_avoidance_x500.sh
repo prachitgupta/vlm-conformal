@@ -27,7 +27,6 @@ if [[ -f "${PX4_DIR}/build/px4_sitl_default/rootfs/gz_env.sh" ]]; then
   # Prevent nounset failures in gz_env.sh when these vars are unset.
   export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}"
   export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
-  export GZ_SIM_SERVER_CONFIG_PATH="${GZ_SIM_SERVER_CONFIG_PATH:-}"
   # shellcheck disable=SC1091
   source "${PX4_DIR}/build/px4_sitl_default/rootfs/gz_env.sh"
 fi
@@ -35,10 +34,16 @@ fi
 # Ensure local world/model search paths are available.
 export GZ_SIM_RESOURCE_PATH="${GZ_SIM_RESOURCE_PATH:-}:${PX4_DIR}/Tools/simulation/gz/models:${PX4_DIR}/Tools/simulation/gz/worlds"
 
+# This world embeds the required PX4 sensor/world plugins directly to avoid
+# startup failures when a server config path is ignored or points elsewhere.
+unset GZ_SIM_SERVER_CONFIG_PATH
+
 # shellcheck disable=SC1091
 source "${ENV_CFG}"
 
 echo "Starting Gazebo server with world: ${WORLD_FILE}"
+echo "Using embedded world plugins (GZ_SIM_SERVER_CONFIG_PATH unset)"
+echo "Using GZ_SIM_RESOURCE_PATH=${GZ_SIM_RESOURCE_PATH}"
 gz sim -r -s "${WORLD_FILE}" &
 GZ_SERVER_PID=$!
 
@@ -62,6 +67,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Launching PX4 SITL in standalone mode (x500 in obstacle_avoidance world)"
+echo "Launching PX4 SITL in standalone mode (${PX4_SIM_MODEL} in obstacle_avoidance world)"
 echo "Using PX4_SIM_MODEL=${PX4_SIM_MODEL}"
 PX4_GZ_STANDALONE=1 make -C "${PX4_DIR}" px4_sitl "${PX4_SIM_MODEL}"

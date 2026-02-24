@@ -2,6 +2,7 @@ import sys
 import os
 import subprocess
 import warnings
+import shutil
 
 from setuptools import find_packages, setup
 from setuptools.command.develop import DevelopDeprecationWarning, develop as _develop
@@ -33,6 +34,20 @@ if 'develop' in sys.argv:
 
 
 warnings.filterwarnings('ignore', category=DevelopDeprecationWarning)
+
+
+def _cleanup_duplicate_console_script_bin(target_dir=None):
+    candidates = []
+    if target_dir:
+        candidates.append(os.path.join(target_dir, 'bin'))
+
+    # Fallback: derive the workspace install path from setup.py location.
+    ws_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    candidates.append(os.path.join(ws_root, 'install', package_name, 'lib', package_name, 'bin'))
+
+    for bin_dir in candidates:
+        if bin_dir and os.path.isdir(bin_dir):
+            shutil.rmtree(bin_dir, ignore_errors=True)
 
 
 class develop(_develop):
@@ -82,6 +97,11 @@ class develop(_develop):
 
         subprocess.check_call(cmd)
 
+        # pip --target creates console scripts under <target>/bin/, while colcon
+        # also generates wrappers in <target>. ros2 run sees both and reports
+        # duplicate executables, so remove the pip-generated copies.
+        _cleanup_duplicate_console_script_bin(install_dir)
+
 
 package_name = 'llm_drone'
 
@@ -112,6 +132,7 @@ setup(
     entry_points={
         'console_scripts': [
         'mpc = llm_drone.mpc_vision_controller:main',
+        'mpc_local_planner = llm_drone.mpc_local_planner:main',
         'mpc_sim = llm_drone.mpc_single_integrator_sim:main',
         'mission_executor = llm_drone.mission_executor:main',
         'llm = llm_drone.llm_planner:main',
