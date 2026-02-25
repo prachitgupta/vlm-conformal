@@ -34,6 +34,8 @@ import numpy as np
 from numpy.linalg import norm
 import cv2
 from cv_bridge import CvBridge
+from collections import deque
+import os
 
 # ROS2 message types
 from sensor_msgs.msg import Image
@@ -45,8 +47,8 @@ from px4_msgs.msg import TrajectorySetpoint, VehicleOdometry
 Ts          = 0.1          # sampling time [s]
 T_horizon   = 10           # MPC prediction horizon [steps]
 V_MAX       = 3.0          # max velocity magnitude [m/s]
-K_obs       = 80.0         # obstacle repulsion gain  (Eq.10)
-EPS         = 0.25         # singularity guard [m²]     (ε in paper)
+K_obs       = 100.0         # obstacle repulsion gain  (Eq.10)
+EPS         = 0.5         # singularity guard [m²]     (ε in paper)
 N_OBS       = 1            # nearest-point method: N=1 (Section III-A)
 Q_diag      = np.array([2.0, 2.0, 2.0, 0.1, 0.1, 0.1])   # tracking weight Q
 MAX_ITER    = 30           # gradient-descent iterations per MPC cycle
@@ -60,6 +62,11 @@ DEPTH_MAX   = 19.1         # depth camera far clip [m] from OakD-Lite SDF
 DEPTH_MIN   = 0.2          # depth camera near clip [m] from OakD-Lite SDF
 BOX_THRESH  = 0.05         # bounding-box volume threshold [m³] to filter micro-debris
 FIFO_LEN    = 200          # local obstacle map FIFO size (Section III-B)
+SETPOINT_LOG_EVERY_N = 10  # print MPC/PX4 setpoint debug every N control ticks
+DEBUG_PLOT_ENABLED = True  # non-blocking 2D MPC debug plots (optional)
+DEBUG_PLOT_RATE_HZ = 4.0   # plot refresh rate, decoupled from MPC loop
+DEBUG_PLOT_OBS_MAX = 200   # max local obstacle points shown in debug plot
+DEBUG_PATH_HISTORY_LEN = 300
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -112,6 +119,186 @@ class LocalObstacleMap:
 
     def clear(self):
         self._buf.clear()
+
+    def snapshot(self, max_points: int | None = None) -> np.ndarray:
+        """Return a copy of cached obstacle points for debug/visualisation."""
+        if not self._buf:
+            return np.zeros((0, 3), dtype=float)
+        pts = np.array(self._buf, dtype=float)
+        if max_points is not None and pts.shape[0] > max_points:
+            pts = pts[-max_points:]
+        return pts
+
+
+class MPCDebugPlotter2D:
+    """
+    Optional async matplotlib plotter for MPC debug views.
+
+    Rendering is triggered by a separate ROS timer callback (main thread), so
+    the MPC control timer only publishes lightweight snapshots.
+    """
+
+    def __init__(self,
+                 enabled: bool = DEBUG_PLOT_ENABLED,
+                 rate_hz: float = DEBUG_PLOT_RATE_HZ,
+                 path_history_len: int = DEBUG_PATH_HISTORY_LEN):
+        self._enabled = bool(enabled)
+        self._rate_hz = max(rate_hz, 0.2)
+        self._latest: dict | None = None
+        self._path_hist = deque(maxlen=path_history_len)
+        self._plt = None
+        self._fig = None
+        self._axes = None
+        self._artists: dict[str, object] = {}
+
+        if not self._enabled:
+            return
+
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+            self._plt = plt
+            self._plt.ion()
+            self._fig, self._axes = self._plt.subplots(1, 2, figsize=(11, 5))
+            try:
+                self._fig.canvas.manager.set_window_title('MPC Local Planner Debug')
+            except Exception:
+                pass
+            self._init_figure()
+            self._plt.show(block=False)
+            display = os.environ.get('DISPLAY', '')
+            print(f'[MPCDebugPlotter2D] Started (DISPLAY={display or "unset"}, rate={self._rate_hz:.1f} Hz)')
+        except Exception as e:
+            self._enabled = False
+            print(f'[MPCDebugPlotter2D] Disabled (matplotlib init failed): {e}')
+
+    def _init_figure(self) -> None:
+        ax_xy, ax_xz = self._axes
+        ax_xy.set_title('Top View (N-E)')
+        ax_xy.set_xlabel('North [m]')
+        ax_xy.set_ylabel('East [m]')
+        ax_xy.grid(True, alpha=0.3)
+        ax_xy.axis('equal')
+
+        ax_xz.set_title('Vertical View (N-D)')
+        ax_xz.set_xlabel('North [m]')
+        ax_xz.set_ylabel('Down [m] (NED)')
+        ax_xz.grid(True, alpha=0.3)
+
+        self._artists['obs_xy'] = ax_xy.scatter([], [], s=10, c='0.7', alpha=0.6, label='local obs')
+        self._artists['path_xy'], = ax_xy.plot([], [], 'k-', lw=1.5, alpha=0.8, label='actual path')
+        self._artists['pred_xy'], = ax_xy.plot([], [], 'b.-', lw=1.5, ms=5, label='MPC pred')
+        self._artists['cur_xy'], = ax_xy.plot([], [], 'go', ms=7, label='current')
+        self._artists['goal_xy'], = ax_xy.plot([], [], 'r*', ms=12, label='goal')
+        self._artists['nearest_xy'], = ax_xy.plot([], [], 'mx', ms=8, mew=2, label='nearest obs')
+        ax_xy.legend(loc='best', fontsize=8)
+
+        self._artists['path_xz'], = ax_xz.plot([], [], 'k-', lw=1.5, alpha=0.8, label='actual path')
+        self._artists['pred_xz'], = ax_xz.plot([], [], 'b.-', lw=1.5, ms=5, label='MPC pred')
+        self._artists['cur_xz'], = ax_xz.plot([], [], 'go', ms=7, label='current')
+        self._artists['goal_xz'], = ax_xz.plot([], [], 'r*', ms=12, label='goal')
+        self._artists['nearest_xz'], = ax_xz.plot([], [], 'mx', ms=8, mew=2, label='nearest obs')
+        ax_xz.legend(loc='best', fontsize=8)
+
+        self._fig.tight_layout()
+
+    def submit(self,
+               x0: np.ndarray,
+               x_ref: np.ndarray,
+               X_opt: np.ndarray,
+               x_min: np.ndarray | None,
+               obs_pts: np.ndarray | None = None) -> None:
+        """Store latest MPC snapshot for async plotting."""
+        if not self._enabled:
+            return
+
+        x0_pos = np.array(x0[:3], dtype=float, copy=True)
+        x_ref_pos = np.array(x_ref[:3], dtype=float, copy=True)
+        x_pred = np.array(X_opt[:, :3], dtype=float, copy=True)
+        x_min_copy = None if x_min is None else np.array(x_min[:3], dtype=float, copy=True)
+        obs_copy = None
+        if obs_pts is not None:
+            obs_copy = np.array(obs_pts[:, :3], dtype=float, copy=True)
+
+        self._path_hist.append(x0_pos)
+        self._latest = {
+            'x0': x0_pos,
+            'x_ref': x_ref_pos,
+            'x_pred': x_pred,
+            'x_min': x_min_copy,
+            'obs': obs_copy,
+        }
+
+    def draw_latest(self) -> None:
+        """Render the latest snapshot (call from main thread / ROS timer)."""
+        if not self._enabled:
+            return
+        if self._latest is None:
+            return
+        try:
+            snap = self._latest.copy()
+            path_hist = np.array(self._path_hist, dtype=float) if self._path_hist else None
+            self._draw(snap, path_hist)
+        except Exception as e:
+            print(f'[MPCDebugPlotter2D] Plot loop stopped: {e}')
+            self._enabled = False
+
+    def _draw(self, snap: dict, path_hist: np.ndarray | None) -> None:
+        x0 = snap['x0']
+        x_ref = snap['x_ref']
+        x_pred = snap['x_pred']
+        x_min = snap['x_min']
+        obs = snap['obs']
+
+        pred_n = x_pred[:, 0]
+        pred_e = x_pred[:, 1]
+        pred_d = x_pred[:, 2]
+
+        path_n = np.array([])
+        path_e = np.array([])
+        path_d = np.array([])
+        if path_hist is not None and path_hist.size:
+            path_n = path_hist[:, 0]
+            path_e = path_hist[:, 1]
+            path_d = path_hist[:, 2]
+
+        self._artists['pred_xy'].set_data(pred_n, pred_e)
+        self._artists['cur_xy'].set_data([x0[0]], [x0[1]])
+        self._artists['goal_xy'].set_data([x_ref[0]], [x_ref[1]])
+        self._artists['path_xy'].set_data(path_n, path_e)
+        if x_min is not None:
+            self._artists['nearest_xy'].set_data([x_min[0]], [x_min[1]])
+        else:
+            self._artists['nearest_xy'].set_data([], [])
+
+        if obs is not None and obs.size:
+            self._artists['obs_xy'].set_offsets(obs[:, :2])
+        else:
+            self._artists['obs_xy'].set_offsets(np.zeros((0, 2)))
+
+        self._artists['pred_xz'].set_data(pred_n, pred_d)
+        self._artists['cur_xz'].set_data([x0[0]], [x0[2]])
+        self._artists['goal_xz'].set_data([x_ref[0]], [x_ref[2]])
+        self._artists['path_xz'].set_data(path_n, path_d)
+        if x_min is not None:
+            self._artists['nearest_xz'].set_data([x_min[0]], [x_min[2]])
+        else:
+            self._artists['nearest_xz'].set_data([], [])
+
+        for ax in self._axes:
+            ax.relim()
+            ax.autoscale_view()
+
+        self._fig.canvas.draw_idle()
+        self._plt.pause(0.001)
+
+    def close(self) -> None:
+        if not self._enabled:
+            return
+        if self._plt is not None and self._fig is not None:
+            try:
+                self._plt.close(self._fig)
+            except Exception:
+                pass
 
 
 class MPCPlanner:
@@ -391,6 +578,7 @@ class MPCUAVNode(Node):
         self._obs_map   = LocalObstacleMap(FIFO_LEN)
         self._depth2obs = DepthToObstacles()
         self._bridge    = CvBridge()
+        self._debug_plotter = MPCDebugPlotter2D()
 
         # ── state ───────────────────────────────────────────────────────────
         self._x_state   = np.zeros(6)          # [px, py, pz, vx, vy, vz] NED
@@ -398,9 +586,13 @@ class MPCUAVNode(Node):
         self._R_ned_body = np.eye(3)           # body FRD -> NED rotation
         self._U_warm    = np.zeros((T_horizon, 3))  # warm-start velocities
         self._goal_ned  = np.array([20.0, 0.0, -5.0])  # target pos NED [m]
+        self._tick_count = 0
+        self._warned_pose_frame = False
+        self._warned_velocity_frame = False
 
         # ── MPC timer (10 Hz matches paper) ─────────────────────────────────
         self.create_timer(Ts, self._mpc_step)
+        self.create_timer(1.0 / max(DEBUG_PLOT_RATE_HZ, 0.2), self._debug_plot_step)
 
         self.get_logger().info(
             f'MPC UAV Node started | Ts={Ts}s | horizon={T_horizon} | '
@@ -410,14 +602,49 @@ class MPCUAVNode(Node):
 
     def _state_cb(self, msg: VehicleOdometry) -> None:
         """Update vehicle state from PX4 vehicle_odometry (position/velocity + attitude)."""
-        self._x_state = np.array([
-            float(msg.position[0]), float(msg.position[1]), float(msg.position[2]),
-            float(msg.velocity[0]), float(msg.velocity[1]), float(msg.velocity[2]),
-        ])
         # PX4 VehicleOdometry quaternion is [w, x, y, z].
         w, x, y, z = (float(msg.q[0]), float(msg.q[1]), float(msg.q[2]), float(msg.q[3]))
         self._R_ned_body = self._quat_to_rotmat(w, x, y, z)
         self._yaw = self._quat_to_yaw(w, x, y, z)
+        pos_ned = np.array([
+            float(msg.position[0]), float(msg.position[1]), float(msg.position[2])
+        ], dtype=float)
+        vel_raw = np.array([
+            float(msg.velocity[0]), float(msg.velocity[1]), float(msg.velocity[2])
+        ], dtype=float)
+
+        if msg.pose_frame != VehicleOdometry.POSE_FRAME_NED and not self._warned_pose_frame:
+            self.get_logger().warn(
+                f'Unexpected VehicleOdometry.pose_frame={msg.pose_frame} '
+                f'(expected POSE_FRAME_NED={VehicleOdometry.POSE_FRAME_NED}). '
+                'Planner assumes position is local NED.'
+            )
+            self._warned_pose_frame = True
+
+        if msg.velocity_frame == VehicleOdometry.VELOCITY_FRAME_NED:
+            vel_ned = vel_raw
+        elif msg.velocity_frame in (
+            VehicleOdometry.VELOCITY_FRAME_BODY_FRD,
+            VehicleOdometry.VELOCITY_FRAME_FRD,
+        ):
+            # Convert body/world FRD-aligned velocity to NED using current attitude.
+            vel_ned = self._R_ned_body @ vel_raw
+            if not self._warned_velocity_frame:
+                self.get_logger().info(
+                    f'Converting VehicleOdometry velocity from frame={msg.velocity_frame} '
+                    f'to NED using current attitude'
+                )
+                self._warned_velocity_frame = True
+        else:
+            vel_ned = vel_raw
+            if not self._warned_velocity_frame:
+                self.get_logger().warn(
+                    f'Unexpected VehicleOdometry.velocity_frame={msg.velocity_frame}; '
+                    'using raw velocity as NED.'
+                )
+                self._warned_velocity_frame = True
+
+        self._x_state = np.concatenate([pos_ned, vel_ned])
 
     def _depth_cb(self, msg: Image) -> None:
         """
@@ -455,6 +682,7 @@ class MPCUAVNode(Node):
         3.  Extract first control u*(1) and publish as TrajectorySetpoint
         """
         x0 = self._x_state.copy()
+        self._tick_count += 1
 
         # build reference state: goal position, zero velocity
         x_ref = np.concatenate([self._goal_ned, np.zeros(3)])
@@ -471,7 +699,16 @@ class MPCUAVNode(Node):
 
         # ── Step 3: publish first optimal control u*(1) ─────────────────────
         u_cmd = U_opt[0]                    # [vx_ref, vy_ref, vz_ref] NED
-        self._publish_setpoint(X_opt[1, :3], u_cmd)
+        pos_sp_ned = X_opt[1, :3]
+        self._publish_setpoint(pos_sp_ned, u_cmd)
+        self._log_setpoint_debug(x0, x_ref, x_min, X_opt, pos_sp_ned, u_cmd)
+        self._debug_plotter.submit(
+            x0=x0,
+            x_ref=x_ref,
+            X_opt=X_opt,
+            x_min=x_min,
+            obs_pts=self._obs_map.snapshot(DEBUG_PLOT_OBS_MAX),
+        )
 
         # diagnostics
         dist_goal = norm(x0[:3] - self._goal_ned)
@@ -479,6 +716,10 @@ class MPCUAVNode(Node):
         self.get_logger().debug(
             f'dist_goal={dist_goal:.2f}m  dist_obs={dist_obs:.2f}m  '
             f'u=[{u_cmd[0]:.2f},{u_cmd[1]:.2f},{u_cmd[2]:.2f}] m/s')
+
+    def _debug_plot_step(self) -> None:
+        """Separate timer loop for debug plotting (main thread-safe)."""
+        self._debug_plotter.draw_latest()
 
     def _publish_setpoint(self, pos_ned: np.ndarray, vel_ned: np.ndarray) -> None:
         """
@@ -507,6 +748,43 @@ class MPCUAVNode(Node):
 
         self._sp_pub.publish(sp)
 
+    def _log_setpoint_debug(self,
+                            x0: np.ndarray,
+                            x_ref: np.ndarray,
+                            x_min: np.ndarray | None,
+                            X_opt: np.ndarray,
+                            pos_sp_ned: np.ndarray,
+                            vel_sp_ned: np.ndarray) -> None:
+        """Throttle MPC/PX4 setpoint logs to debug frame/sign mismatches."""
+        if self._tick_count % SETPOINT_LOG_EVERY_N != 0:
+            return
+
+        pos_cur_enu = self._ned_to_gazebo_enu(*x0[:3])
+        pos_sp_enu = self._ned_to_gazebo_enu(*pos_sp_ned)
+        goal_enu = self._ned_to_gazebo_enu(*x_ref[:3])
+        vel_sp_enu = self._ned_to_gazebo_enu(*vel_sp_ned)
+        nearest_obs = 'None' if x_min is None else (
+            f'NED[{x_min[0]:.2f},{x_min[1]:.2f},{x_min[2]:.2f}] '
+            f'ENU[{self._ned_to_gazebo_enu(*x_min)[0]:.2f},'
+            f'{self._ned_to_gazebo_enu(*x_min)[1]:.2f},'
+            f'{self._ned_to_gazebo_enu(*x_min)[2]:.2f}]'
+        )
+        z_seq = ','.join(f'{p[2]:.2f}' for p in X_opt[1:min(4, len(X_opt))])
+
+        self.get_logger().info(
+            'MPC->PX4 TrajectorySetpoint '
+            f'pose_frame=NED vel_frame_assumed=NED | '
+            f'cur_NED=[{x0[0]:.2f},{x0[1]:.2f},{x0[2]:.2f}] '
+            f'goal_NED=[{x_ref[0]:.2f},{x_ref[1]:.2f},{x_ref[2]:.2f}] '
+            f'pub_pos_NED=[{pos_sp_ned[0]:.2f},{pos_sp_ned[1]:.2f},{pos_sp_ned[2]:.2f}] '
+            f'pub_vel_NED=[{vel_sp_ned[0]:.2f},{vel_sp_ned[1]:.2f},{vel_sp_ned[2]:.2f}] | '
+            f'cur_ENU=[{pos_cur_enu[0]:.2f},{pos_cur_enu[1]:.2f},{pos_cur_enu[2]:.2f}] '
+            f'goal_ENU=[{goal_enu[0]:.2f},{goal_enu[1]:.2f},{goal_enu[2]:.2f}] '
+            f'pub_pos_ENU=[{pos_sp_enu[0]:.2f},{pos_sp_enu[1]:.2f},{pos_sp_enu[2]:.2f}] '
+            f'pub_vel_ENU=[{vel_sp_enu[0]:.2f},{vel_sp_enu[1]:.2f},{vel_sp_enu[2]:.2f}] | '
+            f'pred_z_NED=[{z_seq}] nearest_obs={nearest_obs}'
+        )
+
     def set_goal(self, x: float, y: float, z: float) -> None:
         """Update navigation goal in NED [m]. z negative = up in NED."""
         self._goal_ned = np.array([x, y, z])
@@ -522,6 +800,15 @@ class MPCUAVNode(Node):
         NED: x=North, y=East, z=Down
         """
         return np.array([y_enu, x_enu, -z_enu], dtype=float)
+
+    @staticmethod
+    def _ned_to_gazebo_enu(x_ned: float, y_ned: float, z_ned: float) -> np.ndarray:
+        """
+        Convert PX4 local NED -> Gazebo world ENU.
+        NED: x=North, y=East, z=Down
+        ENU: x=East, y=North, z=Up
+        """
+        return np.array([y_ned, x_ned, -z_ned], dtype=float)
 
     def set_goal_gazebo(self, x: float, y: float, z: float) -> None:
         """Update navigation goal from Gazebo world coordinates (ENU) [m]."""
@@ -553,6 +840,10 @@ class MPCUAVNode(Node):
             return 0.0
         w, x, y, z = w / n, x / n, y / n, z / n
         return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+
+    def destroy_node(self):
+        self._debug_plotter.close()
+        return super().destroy_node()
 
 
 def main(args=None):

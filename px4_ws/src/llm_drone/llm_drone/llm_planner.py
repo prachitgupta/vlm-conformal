@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-LLM-based Trajectory Planner using open-source LLMs (Qwen/Llama)
+LLM-based Trajectory Planner using local Qwen or OpenAI cloud API
 Save as: ros2_ws/src/px4_vision/px4_vision/llm_planner.py
 
 Subscribes to:
   - /fmu/out/vehicle_odometry (drone position)
-  - /depth_camera (Image, for LLM visualization/features)
-  - /depth_camera/points (PointCloud2, for obstacle detection)
+  - /depth_camera (Image, for LLM visualization/features + obstacle detection)
 
 Publishes to:
   - /llm/trajectory (LLM-generated trajectory)
@@ -19,16 +18,17 @@ Compares with:
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image, PointCloud2
+from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TwistStamped, PoseStamped
-from sensor_msgs_py import point_cloud2 as pc2
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-import base64
 import json
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 import os
 import urllib.request
 import urllib.error
@@ -42,20 +42,106 @@ except ImportError:
     HAS_PX4_MSGS = False
 
 
+# Match MPC local planner depth camera assumptions so obstacle signals are aligned.
+DEPTH_HFOV_DEG = 72.995
+DEPTH_VFOV_DEG = 58.053
+DEPTH_MIN_M = 0.2
+DEPTH_MAX_M = 19.1
+OBS_FIFO_LEN = 200
+MPC_DEPTH_SAMPLE_COUNT = 500
+
+
+class LocalObstacleMap:
+    """FIFO local obstacle cache matching MPC local planner semantics."""
+
+    def __init__(self, maxlen=OBS_FIFO_LEN):
+        self._buf = []
+        self._maxlen = int(maxlen)
+
+    def update(self, points_ned):
+        if points_ned is None or points_ned.shape[0] == 0:
+            return
+        for pt in points_ned:
+            self._buf.append(np.array(pt, dtype=float))
+        if len(self._buf) > self._maxlen:
+            self._buf = self._buf[-self._maxlen:]
+
+    def nearest(self, x_ref):
+        if not self._buf:
+            return None
+        pts = np.array(self._buf, dtype=float)
+        dists = np.linalg.norm(pts - np.asarray(x_ref, dtype=float)[None, :3], axis=1)
+        return pts[int(np.argmin(dists))]
+
+    def snapshot(self, max_points=None):
+        if not self._buf:
+            return np.zeros((0, 3), dtype=float)
+        pts = np.array(self._buf, dtype=float)
+        if max_points is not None and pts.shape[0] > max_points:
+            pts = pts[-int(max_points):]
+        return pts
+
+
+class DepthToObstacles:
+    """Depth image to obstacle points using the same back-projection and transforms as MPC."""
+
+    def __init__(self, hfov_deg=DEPTH_HFOV_DEG, vfov_deg=DEPTH_VFOV_DEG, n_sample=MPC_DEPTH_SAMPLE_COUNT):
+        self.hfov = np.deg2rad(float(hfov_deg))
+        self.vfov = np.deg2rad(float(vfov_deg))
+        self.n_sample = int(n_sample)
+        self.rotation_body_camera = np.array([
+            [0.0, 0.0, 1.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ], dtype=float)
+        self.translation_body_camera_m = np.array([0.13233, 0.0, 0.26078], dtype=float)
+
+    def depth_to_body_frame(self, depth_img):
+        if depth_img is None or depth_img.ndim != 2:
+            return np.zeros((0, 3), dtype=float)
+
+        H, W = depth_img.shape
+        fy = (H / 2.0) / np.tan(self.vfov / 2.0)
+        fx = (W / 2.0) / np.tan(self.hfov / 2.0)
+        cx, cy = W / 2.0, H / 2.0
+
+        total = H * W
+        if total <= 0:
+            return np.zeros((0, 3), dtype=float)
+        idx = np.random.choice(total, min(self.n_sample, total), replace=False)
+        rows, cols = np.unravel_index(idx, (H, W))
+        depths = depth_img[rows, cols]
+
+        valid = (depths > DEPTH_MIN_M) & (depths < DEPTH_MAX_M) & np.isfinite(depths)
+        if not np.any(valid):
+            return np.zeros((0, 3), dtype=float)
+        rows = rows[valid]
+        cols = cols[valid]
+        depths = depths[valid]
+
+        xc = (cols - cx) / fx * depths
+        yc = (rows - cy) / fy * depths
+        zc = depths
+        pts_cam = np.column_stack([xc, yc, zc])
+        return (self.rotation_body_camera @ pts_cam.T).T + self.translation_body_camera_m
+
+    @staticmethod
+    def body_to_spatial(pts_body, rotation_ned_body, pos_ned):
+        if pts_body is None or pts_body.shape[0] == 0:
+            return np.zeros((0, 3), dtype=float)
+        return (rotation_ned_body @ pts_body.T).T + np.asarray(pos_ned, dtype=float)[None, :]
+
+
 class LLMTrajectoryPlanner(Node):
     """
-    Uses an open-source LLM to generate trajectories from depth camera input
+    Uses either local Qwen (Ollama) or OpenAI cloud API to generate trajectories.
     """
     
     def __init__(self, goal_override=None):
         super().__init__('llm_trajectory_planner')
         
-        # OpenAI setup (disabled for now)
-        # api_key = self._load_openai_key()
-        # if not api_key:
-        #     self.get_logger().error('OpenAI API key not found in env or key file!')
-        #     raise ValueError('Set OPENAI_API_KEY or provide /home/prachit/api_key.txt')
-        # self.client = OpenAI(api_key=api_key)
+        # OpenAI client is created lazily only when provider=openai.
+        self.client = None
         
         # Load prompt from file
         prompt_file = self._resolve_prompt_file()
@@ -71,15 +157,13 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('goal_y', 3.0)
         self.declare_parameter('goal_z', 2.5)
         self.declare_parameter('update_rate', 1.0)  # Hz
-        # Default to a lighter local Qwen model for on-device/self-hosted use.
-        self.declare_parameter('llm_provider', 'qwen')  # qwen or llama
+        # Supported providers are intentionally kept minimal for clarity.
+        self.declare_parameter('llm_provider', 'qwen')  # qwen or openai
         self.declare_parameter('ollama_url', 'http://localhost:11434/api/generate')
-        self.declare_parameter('qwen_model', 'qwen2.5:3b-instruct')
-        self.declare_parameter('llama_model', 'llama3.2:latest')
+        self.declare_parameter('qwen_model', 'qwen2.5:3b')
+        self.declare_parameter('openai_model', 'gpt-4o-mini')
         self.declare_parameter('goal_frame', 'ned')  # gazebo(ENU) or ned
-        self.declare_parameter('pointcloud_topic', '/depth_camera/points')
-        self.declare_parameter('obstacle_threshold', 2.5)  # meters
-        self.declare_parameter('obstacle_sample_step', 20)
+        self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
         
         goal_input = np.array([
             self.get_parameter('goal_x').value,
@@ -96,26 +180,14 @@ class LLMTrajectoryPlanner(Node):
         self.current_velocity = np.zeros(3)
         self.rotation_ned_body = np.eye(3)
         self.depth_image = None
-        self.obstacles_ned = []
+        self.latest_depth_obstacles_ned = np.zeros((0, 3), dtype=float)
         self.last_environment_vector = None
         self.bridge = CvBridge()
         self.warned_fallback_pub = False
-        self.obs_threshold = float(self.get_parameter('obstacle_threshold').value)
-        self.obstacle_sample_step = int(self.get_parameter('obstacle_sample_step').value)
-        self.pointcloud_topic = str(self.get_parameter('pointcloud_topic').value)
-
-        # Match MPC camera projection for depth->NED obstacle mapping.
-        self.camera_K = np.array([
-            [432.496042035043, 0.0, 319.5],
-            [0.0, 432.496042035043, 239.5],
-            [0, 0, 1]
-        ], dtype=float)
-        self.rotation_body_camera = np.array([
-            [0.0, 0.0, 1.0],
-            [-1.0, 0.0, 0.0],
-            [0.0, -1.0, 0.0],
-        ], dtype=float)
-        self.translation_body_camera_m = np.array([0.13233, 0.0, 0.26078], dtype=float)
+        self.depth_to_obstacles = DepthToObstacles(
+            n_sample=int(self.get_parameter('depth_obstacle_samples').value)
+        )
+        self.local_obstacle_map = LocalObstacleMap(OBS_FIFO_LEN)
         
         # Trajectory storage
         self.llm_trajectory = []
@@ -140,12 +212,6 @@ class LLMTrajectoryPlanner(Node):
             Image,
             '/depth_camera',
             self.depth_image_callback,
-            qos_profile_sensor_data,
-        )
-        self.pointcloud_sub = self.create_subscription(
-            PointCloud2,
-            self.pointcloud_topic,
-            self.pointcloud_callback,
             qos_profile_sensor_data,
         )
         self.mpc_traj_sub = self.create_subscription(
@@ -175,7 +241,19 @@ class LLMTrajectoryPlanner(Node):
         
         self.get_logger().info('LLM Trajectory Planner initialized')
         self.get_logger().info(f'Goal: {self.goal}')
-        self.get_logger().info(f'Pointcloud obstacle topic: {self.pointcloud_topic}')
+        provider = str(self.get_parameter('llm_provider').value).strip().lower()
+        if provider == 'openai':
+            active_model = str(self.get_parameter('openai_model').value)
+            backend_desc = 'OpenAI cloud API'
+        else:
+            active_model = str(self.get_parameter('qwen_model').value)
+            backend_desc = 'Local Qwen via Ollama'
+        self.get_logger().info(
+            f'Active LLM backend: provider={provider} ({backend_desc}), model={active_model}'
+        )
+        self.get_logger().info(
+            'Obstacle perception source: /depth_camera (MPC-consistent depth->3D->NED local map)'
+        )
         if HAS_PX4_MSGS:
             self.get_logger().info('Publishing PX4 trajectory setpoints to /fmu/in/trajectory_setpoint')
         else:
@@ -211,27 +289,16 @@ class LLMTrajectoryPlanner(Node):
             self.get_logger().warn(f'API key file not found: {key_path}')
             return None
 
-        openai_key, claude_key = self._parse_key_file(text)
-        if claude_key:
-            # Placeholder for future Claude usage; do not log the key.
-            self.claude_api_key = claude_key
+        openai_key = self._parse_openai_key_file(text)
         if openai_key:
             return openai_key
 
         self.get_logger().warn('OpenAI key not found in key file')
         return None
 
-    def _parse_key_file(self, text):
-        """
-        Parse a text file containing OpenAI and Claude keys.
-        Supported formats:
-        - OPENAI_API_KEY=...
-        - CLAUDE_API_KEY=... or ANTHROPIC_API_KEY=...
-        - openai: ... / claude: ...
-        - Two-line fallback (first OpenAI, second Claude)
-        """
+    def _parse_openai_key_file(self, text):
+        """Parse OpenAI API key from a text file."""
         openai_key = None
-        claude_key = None
 
         def _clean(val):
             return val.strip().strip('"').strip("'")
@@ -246,23 +313,16 @@ class LLMTrajectoryPlanner(Node):
                 if len(parts) == 2:
                     openai_key = _clean(parts[1])
                     continue
-            if 'CLAUDE' in upper or 'ANTHROPIC' in upper:
-                parts = line.split('=', 1) if '=' in line else line.split(':', 1)
-                if len(parts) == 2:
-                    claude_key = _clean(parts[1])
-                    continue
 
-        if not openai_key or not claude_key:
+        if not openai_key:
             raw_lines = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith('#')]
-            if len(raw_lines) >= 1 and not openai_key:
+            if len(raw_lines) >= 1:
                 openai_key = _clean(raw_lines[0])
-            if len(raw_lines) >= 2 and not claude_key:
-                claude_key = _clean(raw_lines[1])
 
-        return openai_key, claude_key
+        return openai_key
 
     def depth_image_callback(self, msg):
-        """Store latest depth image from sensor_msgs/msg/Image."""
+        """Store latest depth image and update MPC-consistent local obstacle map from depth."""
         try:
             if msg.encoding in ('16UC1', 'mono16'):
                 depth_mm = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
@@ -271,10 +331,17 @@ class LLMTrajectoryPlanner(Node):
                 self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
         except Exception as e:
             self.get_logger().error(f'Depth image conversion error: {e}')
+            return
 
-    def pointcloud_callback(self, msg):
-        """Update NED obstacle samples from depth pointcloud (same mapping as MPC)."""
-        self.obstacles_ned = self.detect_obstacles_in_ned(msg)
+        # Mirror MPC obstacle detection pipeline: depth -> body points -> NED -> FIFO local map.
+        pts_body = self.depth_to_obstacles.depth_to_body_frame(self.depth_image)
+        pts_ned = self.depth_to_obstacles.body_to_spatial(
+            pts_body,
+            self.rotation_ned_body,
+            self.current_position,
+        )
+        self.latest_depth_obstacles_ned = pts_ned
+        self.local_obstacle_map.update(pts_ned)
     
     def odometry_callback(self, msg):
         """Update current state"""
@@ -333,29 +400,6 @@ class LLMTrajectoryPlanner(Node):
             return np.array([g[1], g[0], -g[2]], dtype=float)
         return g
 
-    def detect_obstacles_in_ned(self, pointcloud_msg):
-        """Project pointcloud samples to NED and keep nearby obstacle points."""
-        obstacles = []
-        stride = max(1, int(self.obstacle_sample_step))
-        for i, (x_cam, y_cam, z_cam) in enumerate(
-            pc2.read_points(pointcloud_msg, field_names=('x', 'y', 'z'), skip_nans=True)
-        ):
-            if i % stride != 0:
-                continue
-            if not (np.isfinite(x_cam) and np.isfinite(y_cam) and np.isfinite(z_cam)):
-                continue
-            point_cam = np.array([x_cam, y_cam, z_cam], dtype=float)
-            point_body = self.rotation_body_camera @ point_cam + self.translation_body_camera_m
-            if not np.all(np.isfinite(point_body)):
-                continue
-            point_ned = self.current_position + self.rotation_ned_body @ point_body
-            if not np.all(np.isfinite(point_ned)):
-                continue
-            if np.linalg.norm(point_ned - self.current_position) > self.obs_threshold:
-                continue
-            obstacles.append(point_ned)
-        return obstacles
-    
     def mpc_trajectory_callback(self, msg):
         """Store MPC trajectory for comparison"""
         mpc_point = np.array([
@@ -364,13 +408,6 @@ class LLMTrajectoryPlanner(Node):
             msg.pose.position.z
         ])
         self.mpc_trajectory.append(mpc_point)
-    
-    def encode_image(self, image):
-        """Encode image to base64 for OpenAI API"""
-        # Resize to reduce tokens
-        image_small = cv2.resize(image, (512, 384))
-        _, buffer = cv2.imencode('.jpg', image_small)
-        return base64.b64encode(buffer).decode('utf-8')
     
     def create_depth_visualization(self):
         """Create colored depth map for better LLM understanding"""
@@ -433,18 +470,23 @@ class LLMTrajectoryPlanner(Node):
         speed = float(np.linalg.norm(self.current_velocity))
         heading_to_goal_xy = float(np.arctan2(goal_delta[1], goal_delta[0]))
 
-        if self.obstacles_ned:
-            obs = np.array(self.obstacles_ned, dtype=float)
-            rel = obs - self.current_position
-            dists = np.linalg.norm(rel, axis=1)
-            nearest_idx = int(np.argmin(dists))
-            nearest_dist_ned = float(dists[nearest_idx])
-            nearest_point_ned = [float(x) for x in obs[nearest_idx]]
-            nearest_vec_ned = [float(x) for x in rel[nearest_idx]]
+        # MPC-consistent obstacle signal: nearest point from FIFO local obstacle map (Eq.11).
+        x_min = self.local_obstacle_map.nearest(self.current_position)
+        if x_min is not None:
+            x_min = np.asarray(x_min, dtype=float)
+            x_min_rel = x_min - self.current_position
+            nearest_dist_ned = float(np.linalg.norm(x_min_rel))
+            nearest_point_ned = [float(x) for x in x_min]
+            nearest_vec_ned = [float(x) for x in x_min_rel]
         else:
             nearest_dist_ned = 20.0
             nearest_point_ned = [float(self.current_position[0]), float(self.current_position[1]), float(self.current_position[2])]
             nearest_vec_ned = [20.0, 0.0, 0.0]
+
+        latest_obs = np.asarray(self.latest_depth_obstacles_ned, dtype=float)
+        latest_obs_count = int(latest_obs.shape[0]) if latest_obs.ndim == 2 else 0
+        local_obs_snapshot = self.local_obstacle_map.snapshot()
+        local_obs_count = int(local_obs_snapshot.shape[0]) if local_obs_snapshot.ndim == 2 else 0
 
         vector = {
             "current_position_ned_m": [float(x) for x in self.current_position],
@@ -455,10 +497,20 @@ class LLMTrajectoryPlanner(Node):
             "speed_mps": speed,
             "heading_to_goal_xy_rad": heading_to_goal_xy,
             "obstacle_features_ned": {
-                "sample_count": int(len(self.obstacles_ned)),
+                "pipeline": "mpc_consistent_depth_to_body_to_ned_fifo_local_map",
+                "depth_camera_params": {
+                    "hfov_deg": DEPTH_HFOV_DEG,
+                    "vfov_deg": DEPTH_VFOV_DEG,
+                    "depth_min_m": DEPTH_MIN_M,
+                    "depth_max_m": DEPTH_MAX_M,
+                    "sample_count_per_frame_target": int(self.depth_to_obstacles.n_sample),
+                },
+                "latest_depth_frame_obstacle_points_ned_count": latest_obs_count,
+                "local_obstacle_fifo_count": local_obs_count,
                 "nearest_obstacle_distance_ned_m": nearest_dist_ned,
                 "nearest_obstacle_position_ned_m": nearest_point_ned,
                 "nearest_obstacle_relative_ned_m": nearest_vec_ned,
+                "mpc_nearest_obstacle_eq11_x_min_ned_m": nearest_point_ned,
             },
             "depth_features": {
                 "valid_fraction": depth_valid_fraction,
@@ -504,7 +556,9 @@ class LLMTrajectoryPlanner(Node):
             f"- Current velocity is ({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f}) m/s (speed {vector['speed_mps']:.2f} m/s).\n"
             f"- Goal position NED is ({g[0]:.2f}, {g[1]:.2f}, {g[2]:.2f}) m.\n"
             f"- Goal delta from current state is ({d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}) m with distance {vector['distance_to_goal_m']:.2f} m.\n"
-            f"- NED obstacle samples: {obs_ned['sample_count']} points. "
+            f"- MPC-consistent obstacle pipeline: {obs_ned['pipeline']}.\n"
+            f"- Current depth frame obstacle points (NED): {obs_ned['latest_depth_frame_obstacle_points_ned_count']}; "
+            f"FIFO local obstacle map size: {obs_ned['local_obstacle_fifo_count']} points. "
             f"Nearest obstacle in NED is at ({obs_ned['nearest_obstacle_position_ned_m'][0]:.2f}, "
             f"{obs_ned['nearest_obstacle_position_ned_m'][1]:.2f}, {obs_ned['nearest_obstacle_position_ned_m'][2]:.2f}) m, "
             f"relative vector ({obs_ned['nearest_obstacle_relative_ned_m'][0]:.2f}, "
@@ -568,8 +622,22 @@ class LLMTrajectoryPlanner(Node):
         except Exception as e:
             self.get_logger().error(f'LLM query failed: {e}')
     
+    def _get_openai_client(self):
+        """Initialize OpenAI client on first use."""
+        if self.client is not None:
+            return self.client
+        if OpenAI is None:
+            raise RuntimeError('openai package is not installed in this Python environment')
+
+        api_key = self._load_openai_key()
+        if not api_key:
+            raise RuntimeError('OpenAI API key not found. Set OPENAI_API_KEY or LLM_API_KEY_FILE')
+
+        self.client = OpenAI(api_key=api_key)
+        return self.client
+
     def query_llm(self):
-        """Query open-source LLM (Qwen/Llama) for next waypoint"""
+        """Query the configured LLM backend for the next waypoint."""
         
         env_vector = self.build_environment_vector()
         env_text = self.translate_vector_to_nlp(env_vector)
@@ -577,8 +645,11 @@ class LLMTrajectoryPlanner(Node):
         # Compose final prompt = fixed prompt + translated environment block + vector
         user_message = self.compose_final_prompt(env_vector, env_text)
 
-        # Open-source model call (Qwen enabled by default)
-        content = self.query_open_source_model(user_message)
+        provider = str(self.get_parameter('llm_provider').value).strip().lower()
+        if provider == 'openai':
+            content = self.query_openai_model(user_message)
+        else:
+            content = self.query_qwen_model(user_message)
         self.get_logger().info(f'LLM response: {content}')
         
         # Extract JSON
@@ -618,23 +689,27 @@ class LLMTrajectoryPlanner(Node):
             self.get_logger().error(f'Failed to parse LLM response: {e}')
             return None
 
-    def query_open_source_model(self, user_message):
-        """
-        Query Ollama-compatible endpoint with either Qwen or Llama prompt style.
-        Qwen is currently selected by default.
-        """
-        provider = str(self.get_parameter('llm_provider').value).strip().lower()
-
-        # Prompt snippet for Llama:
-        llama_prompt = (
-            "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
-            f"{self.system_prompt}\n"
-            "<|eot_id|><|start_header_id|>user<|end_header_id|>\n"
-            f"{user_message}\n"
-            "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n"
+    def query_openai_model(self, user_message):
+        """Query OpenAI cloud model (kept as optional backend)."""
+        client = self._get_openai_client()
+        model_name = str(self.get_parameter('openai_model').value)
+        prompt = (
+            f"{self.system_prompt}\n\n"
+            f"{user_message}\n\n"
+            "Return only one JSON object."
         )
+        try:
+            response = client.responses.create(
+                model=model_name,
+                input=prompt,
+            )
+            return response.output_text
+        except Exception as e:
+            self.get_logger().error(f'OpenAI request failed (model={model_name}): {e}')
+            raise
 
-        # Prompt snippet for Qwen (ChatML):
+    def query_qwen_model(self, user_message):
+        """Query local Qwen model through Ollama-compatible endpoint."""
         qwen_prompt = (
             "<|im_start|>system\n"
             f"{self.system_prompt}\n"
@@ -644,20 +719,11 @@ class LLMTrajectoryPlanner(Node):
             "<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
-
-        # For now keep Qwen active as the open-source model in use.
-        # model_name = self.get_parameter('llama_model').value
         model_name = self.get_parameter('qwen_model').value
-
-        if provider == 'llama':
-            prompt = llama_prompt
-            model_name = self.get_parameter('llama_model').value
-        else:
-            prompt = qwen_prompt
 
         payload = {
             "model": model_name,
-            "prompt": prompt,
+            "prompt": qwen_prompt,
             "stream": False,
             "options": {
                 "temperature": 0.3,
@@ -685,13 +751,13 @@ class LLMTrajectoryPlanner(Node):
             except Exception:
                 error_body = "<no response body>"
             self.get_logger().error(
-                "Open-source model request failed "
+                "Local Qwen request failed "
                 f"(status={e.code}, url={url}, model={model_name}): {error_body}"
             )
             raise
         except urllib.error.URLError as e:
             self.get_logger().error(
-                "Open-source model request failed "
+                "Local Qwen request failed "
                 f"(url={url}, model={model_name}): {e}"
             )
             raise
