@@ -264,6 +264,8 @@ def evaluate_response(
     progress_selected = d0 - d_sel
     progress_final = d0 - d5
     progress_pass = (progress_selected > 0.0) and (progress_final > 0.0)
+    goal_dists = [_dist(wp, goal) for wp in waypoints]
+    monotone_goal_progress = all(goal_dists[i] <= (d0 if i == 0 else goal_dists[i - 1]) + 1e-6 for i in range(len(goal_dists)))
     if not progress_pass:
         warnings.append(
             f"Goal progress violation: selected_progress={progress_selected:.2f} m, "
@@ -294,6 +296,7 @@ def evaluate_response(
         warnings.append("Safety check degraded: no obstacle snapshot available, geometric clearance not validated")
 
     turn_sum = 0.0
+    max_turn_deg = 0.0
     for i in range(1, len(seq) - 1):
         u = seq[i] - seq[i - 1]
         v = seq[i + 1] - seq[i]
@@ -301,7 +304,46 @@ def evaluate_response(
         nv = float(np.linalg.norm(v))
         if nu > 1e-8 and nv > 1e-8:
             c = float(np.clip(np.dot(u, v) / (nu * nv), -1.0, 1.0))
-            turn_sum += math.acos(c)
+            ang = math.acos(c)
+            turn_sum += ang
+            max_turn_deg = max(max_turn_deg, math.degrees(ang))
+
+    # Smoothness proxy: mean second-difference magnitude (metres)
+    curvature_terms = []
+    for i in range(1, len(waypoints) - 1):
+        curvature_terms.append(float(np.linalg.norm(waypoints[i + 1] - 2.0 * waypoints[i] + waypoints[i - 1])))
+    smoothness_kappa_m = float(np.mean(curvature_terms)) if curvature_terms else 0.0
+
+    # Selected-index quality: compare immediate-candidate scores from current position.
+    candidate_scores = []
+    selected_is_best = False
+    for wp_i, wp in enumerate(waypoints):
+        seg_len = _dist(p0, wp)
+        speed_i = seg_len / max(dt, 1e-6)
+        kin_score = max(0.0, 1.0 - max(0.0, speed_i - v_max) / max(v_max, 1e-6))
+        prog_i = max(0.0, d0 - _dist(wp, goal))
+        prog_score = min(1.0, prog_i / max(d0, 1e-6))
+
+        if obstacle_points_ned is not None and obstacle_points_ned.size > 0:
+            clr_i = min(_seg_point_distance(p0, wp, obs) for obs in obstacle_points_ned)
+            safety_score_i = min(1.0, clr_i / max(safety_radius, 1e-6))
+        else:
+            clr_i = None
+            safety_score_i = 0.5  # neutral proxy if no obstacle geometry
+
+        comp_i = 0.45 * safety_score_i + 0.35 * prog_score + 0.20 * kin_score
+        candidate_scores.append({
+            "index": wp_i,
+            "composite_score": float(comp_i),
+            "immediate_progress_m": float(prog_i),
+            "implied_speed_mps": float(speed_i),
+            "clearance_m": None if clr_i is None else float(clr_i),
+        })
+    if candidate_scores:
+        best_idx = int(max(candidate_scores, key=lambda x: x["composite_score"])["index"])
+        selected_is_best = (idx == best_idx)
+    else:
+        best_idx = idx
 
     metrics = {
         "selected_waypoint_index": idx,
@@ -310,6 +352,8 @@ def evaluate_response(
         "distance_to_goal_final_m": d5,
         "progress_selected_m": progress_selected,
         "progress_final_m": progress_final,
+        "monotone_goal_progress": bool(monotone_goal_progress),
+        "goal_distances_to_goal_m": goal_dists,
         "segment_lengths_m": seg_lengths,
         "speeds_mps": speeds,
         "accels_mps2": accels,
@@ -317,7 +361,13 @@ def evaluate_response(
         "max_accel_mps2": max(accels) if accels else 0.0,
         "min_clearance_m": min_clearance,
         "clearance_violations": clearance_violations,
+        "clearance_is_proxy": bool(obstacle_points_ned is None or obstacle_points_ned.size == 0),
+        "smoothness_kappa_m": smoothness_kappa_m,
         "turn_angle_sum_rad": turn_sum,
+        "max_turn_deg": max_turn_deg,
+        "candidate_scores": candidate_scores,
+        "selected_index_best_by_composite": bool(selected_is_best),
+        "best_candidate_index_by_composite": int(best_idx),
         "reasoning": parsed.get("reasoning", ""),
     }
 
@@ -333,6 +383,84 @@ def evaluate_response(
         warnings=warnings,
         parsed=parsed,
     )
+
+
+def _latex_escape_text(s: str) -> str:
+    return str(s).replace("\\", "\\textbackslash{}").replace("_", "\\_")
+
+
+def build_latex_style_eval_table(res: EvalResult) -> str:
+    m = res.metrics or {}
+
+    fmt_value = "Parse failed" if not res.format_pass else (
+        f"All keys present, 5 waypoints, index={m.get('selected_waypoint_index', 'N/A')}"
+    )
+    fmt_pass = "Pass" if res.format_pass else "Fail"
+
+    kin_value = (
+        f"Max speed ${m.get('max_speed_mps', 0.0):.2f}\\,\\text{{m/s}}$, "
+        f"max accel ${m.get('max_accel_mps2', 0.0):.2f}\\,\\text{{m/s}}^2$"
+    )
+    kin_pass = "Pass" if res.kinematic_pass else "Fail"
+
+    gp_sel_value = f"$\\Delta d = {m.get('progress_selected_m', 0.0):+.2f}\\,\\text{{m}}$ reduction"
+    gp_sel_pass = "Pass" if (m.get("progress_selected_m", 0.0) > 0) else "Fail"
+
+    gp_final_value = f"$\\Delta d = {m.get('progress_final_m', 0.0):+.2f}\\,\\text{{m}}$ reduction"
+    gp_final_pass = "Pass" if (m.get("progress_final_m", 0.0) > 0) else "Fail"
+
+    mono = bool(m.get("monotone_goal_progress", False))
+    mono_value = "Yes (all 5 waypoints closer to goal)" if mono else "No"
+    mono_pass = "Pass" if mono else "Fail"
+
+    min_clr = m.get("min_clearance_m", None)
+    clr_proxy = bool(m.get("clearance_is_proxy", False))
+    if min_clr is None:
+        obs_value = "No geometric obstacle snapshot available (proxy only)"
+    else:
+        suffix = " (proxy)" if clr_proxy else ""
+        obs_value = f"Min clearance $\\approx {min_clr:.2f}\\,\\text{{m}}${suffix}"
+    obs_pass = "Pass" if res.safety_pass else "Fail"
+
+    smooth_k = float(m.get("smoothness_kappa_m", 0.0))
+    max_turn = float(m.get("max_turn_deg", 0.0))
+    smooth_value = f"${smooth_k:.2f}\\,\\text{{m}}$, max turn ${max_turn:.0f}^\\circ$"
+    smooth_quality = "Good" if max_turn <= 20.0 else ("OK" if max_turn <= 40.0 else "Poor")
+
+    sel_idx = int(m.get("selected_waypoint_index", 0))
+    best_idx = int(m.get("best_candidate_index_by_composite", sel_idx))
+    sel_best = bool(m.get("selected_index_best_by_composite", False))
+    sel_value = f"Index {sel_idx} = {'best' if sel_best else f'not best (best={best_idx})'} composite score"
+    sel_pass = "Pass" if sel_best else "Fail"
+
+    overall = "PASS" if res.passed else "ADVISORY-FAIL (EXECUTING)"
+
+    lines = [
+        r"\begin{center}",
+        r"\begin{tabular}{lll}",
+        r"\toprule",
+        r"\textbf{Metric} & \textbf{Value} & \textbf{Pass?} \\",
+        r"\midrule",
+        f"Format compliance & {fmt_value} & \\textbf{{{fmt_pass}}} \\\\",
+        f"Kinematic plausibility & {kin_value} & \\textbf{{{kin_pass}}} \\\\",
+        f"Goal progress (selected) & {gp_sel_value} & \\textbf{{{gp_sel_pass}}} \\\\",
+        f"Goal progress (final wp) & {gp_final_value} & \\textbf{{{gp_final_pass}}} \\\\",
+        f"Monotone dist. reduction & {mono_value} & \\textbf{{{mono_pass}}} \\\\",
+        f"Obstacle safety & {obs_value} & \\textbf{{{obs_pass}}} \\\\",
+        f"Smoothness $\\kappa$ & {smooth_value} & \\textbf{{{smooth_quality}}} \\\\",
+        f"Selected-index quality & {sel_value} & \\textbf{{{sel_pass}}} \\\\",
+        r"\midrule",
+        f"\\textbf{{Overall}} & --- & \\textbf{{{overall}}} \\\\",
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\end{center}",
+    ]
+
+    if res.warnings:
+        lines.append("% Advisory warnings:")
+        for w in res.warnings:
+            lines.append(f"% - {_latex_escape_text(w)}")
+    return "\n".join(lines)
 
 
 class EvalAndExecuteNode(Node):
@@ -486,6 +614,9 @@ class EvalAndExecuteNode(Node):
         if res.warnings:
             for warn in res.warnings:
                 self.get_logger().warn(warn)
+        latex_table = build_latex_style_eval_table(res)
+        for line in latex_table.splitlines():
+            self.get_logger().info(line)
         self.get_logger().info(f"Metrics: {json.dumps(res.metrics, indent=2)}")
 
         if res.parsed is None:

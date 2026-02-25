@@ -1,3 +1,6 @@
+timestamp_utc: 2026-02-25T05:11:05.914Z
+
+=== SYSTEM PROMPT ===
 You are the motion planner for an autonomous quadrotor.
 
 SECTION 1: CONTEXT AND INSTRUCTIONS
@@ -114,3 +117,104 @@ Before finalizing, verify and repair if needed:
 6) Waypoints maintain obstacle clearance and do not cut through obvious blocked sectors.
 7) Trajectory generally progresses toward goal unless safety forces a temporary detour.
 If any check fails, repair and re-validate before output.
+
+=== USER PROMPT ===
+Use the fixed planning policy exactly as defined in the system prompt.
+
+Dynamic Environment Section (T(v)):
+Environment section (T(v)):
+- Current position NED is (-0.11, 0.32, -2.39) m.
+- Current velocity is (0.00, 0.01, 0.00) m/s (speed 0.01 m/s).
+- Goal position NED is (35.00, 3.00, 2.50) m.
+- Goal delta from current state is (35.11, 2.68, 4.89) m with distance 35.55 m.
+- MPC-consistent obstacle pipeline: mpc_consistent_depth_to_body_to_ned_fifo_local_map.
+- Current depth frame obstacle points (NED): 335; FIFO local obstacle map size: 200 points. Nearest obstacle in NED is at (-2.85, 4.79, -4.76) m, relative vector (-2.73, 4.47, -2.37) m, distance 5.75 m.
+- Depth validity fraction is 0.63. Global nearest obstacle distance is 4.77 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.77, 4.77, 4.77, 4.77, 4.77] m.
+- Nearest obstacle sector is far_right at 4.77 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.
+
+Numerical Environment Vector v:
+{
+  "current_position_ned_m": [
+    -0.11140359193086624,
+    0.3188052475452423,
+    -2.390164613723755
+  ],
+  "current_velocity_mps": [
+    0.0005203979089856148,
+    0.005868515465408564,
+    3.704271512106061e-05
+  ],
+  "goal_position_ned_m": [
+    35.0,
+    3.0,
+    2.5
+  ],
+  "goal_delta_m": [
+    35.111403591930866,
+    2.6811947524547577,
+    4.890164613723755
+  ],
+  "distance_to_goal_m": 35.55155661072188,
+  "speed_mps": 0.0058916602001608705,
+  "heading_to_goal_xy_rad": 0.0762145935658393,
+  "obstacle_features_ned": {
+    "pipeline": "mpc_consistent_depth_to_body_to_ned_fifo_local_map",
+    "depth_camera_params": {
+      "hfov_deg": 72.995,
+      "vfov_deg": 58.053,
+      "depth_min_m": 0.2,
+      "depth_max_m": 19.1,
+      "sample_count_per_frame_target": 500
+    },
+    "latest_depth_frame_obstacle_points_ned_count": 335,
+    "local_obstacle_fifo_count": 200,
+    "nearest_obstacle_distance_ned_m": 5.751789128029754,
+    "nearest_obstacle_position_ned_m": [
+      -2.8451223715838507,
+      4.791937692212007,
+      -4.756796384735759
+    ],
+    "nearest_obstacle_relative_ned_m": [
+      -2.7337187796529845,
+      4.473132444666764,
+      -2.3666317710120044
+    ],
+    "mpc_nearest_obstacle_eq11_x_min_ned_m": [
+      -2.8451223715838507,
+      4.791937692212007,
+      -4.756796384735759
+    ]
+  },
+  "depth_features": {
+    "valid_fraction": 0.6265397135416667,
+    "global_min_m": 4.767982006072998,
+    "global_mean_m": 7.696502685546875,
+    "sector_min_m": {
+      "far_left": 4.770184516906738,
+      "left": 4.769634246826172,
+      "center": 4.769083023071289,
+      "right": 4.768532752990723,
+      "far_right": 4.767982006072998
+    },
+    "sector_mean_m": {
+      "far_left": 5.81252908706665,
+      "left": 8.058968544006348,
+      "center": 7.990748882293701,
+      "right": 9.755229949951172,
+      "far_right": 6.975849628448486
+    },
+    "nearest_obstacle_sector": "far_right",
+    "nearest_obstacle_distance_m": 4.767982006072998,
+    "clearance_status": "clear"
+  }
+}
+
+Sensor attachments:
+1) Depth map visualization (red/yellow close, blue far)
+
+Return only one JSON object with keys:
+- waypoints
+- selected_waypoint_index
+- reasoning
