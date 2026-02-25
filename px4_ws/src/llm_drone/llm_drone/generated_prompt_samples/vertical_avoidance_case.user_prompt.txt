@@ -1,0 +1,99 @@
+Use the fixed planning policy exactly as defined in the system prompt.
+
+Dynamic Environment Section (T(v)):
+Environment section (T(v)):
+- Current position NED is (4.00, 0.20, -2.00) m.
+- Current velocity is (0.40, 0.00, -0.10) m/s (speed 0.41 m/s).
+- Goal position NED is (12.00, 0.00, -2.00) m.
+- Goal delta from current state is (8.00, -0.20, 0.00) m with distance 8.00 m.
+- MPC-consistent obstacle pipeline: mpc_consistent_depth_to_body_to_ned_fifo_local_map.
+- Current depth frame obstacle points (NED): 390; FIFO local obstacle map size: 200 points. Nearest obstacle in NED is at (5.20, 0.20, -2.00) m, relative vector (1.20, 0.00, 0.00) m, distance 1.40 m.
+- Depth validity fraction is 0.95. Global nearest obstacle distance is 1.10 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [6.00, 4.90, 1.10, 5.20, 6.40] m.
+- Nearest obstacle sector is center at 1.10 m and clearance status is blocked.
+- Lateral planning hint: prefer center progress.
+
+Numerical Environment Vector v:
+{
+  "current_position_ned_m": [
+    4.0,
+    0.2,
+    -2.0
+  ],
+  "current_velocity_mps": [
+    0.4,
+    0.0,
+    -0.1
+  ],
+  "goal_position_ned_m": [
+    12.0,
+    0.0,
+    -2.0
+  ],
+  "goal_delta_m": [
+    8.0,
+    -0.2,
+    0.0
+  ],
+  "distance_to_goal_m": 8.0,
+  "speed_mps": 0.41,
+  "heading_to_goal_xy_rad": -0.025,
+  "obstacle_features_ned": {
+    "pipeline": "mpc_consistent_depth_to_body_to_ned_fifo_local_map",
+    "depth_camera_params": {
+      "hfov_deg": 72.995,
+      "vfov_deg": 58.053,
+      "depth_min_m": 0.2,
+      "depth_max_m": 19.1,
+      "sample_count_per_frame_target": 500
+    },
+    "latest_depth_frame_obstacle_points_ned_count": 390,
+    "local_obstacle_fifo_count": 200,
+    "nearest_obstacle_distance_ned_m": 1.4,
+    "nearest_obstacle_position_ned_m": [
+      5.2,
+      0.2,
+      -2.0
+    ],
+    "nearest_obstacle_relative_ned_m": [
+      1.2,
+      0.0,
+      0.0
+    ],
+    "mpc_nearest_obstacle_eq11_x_min_ned_m": [
+      5.2,
+      0.2,
+      -2.0
+    ]
+  },
+  "depth_features": {
+    "valid_fraction": 0.95,
+    "global_min_m": 1.1,
+    "global_mean_m": 7.6,
+    "sector_min_m": {
+      "far_left": 6.0,
+      "left": 4.9,
+      "center": 1.1,
+      "right": 5.2,
+      "far_right": 6.4
+    },
+    "sector_mean_m": {
+      "far_left": 9.2,
+      "left": 8.0,
+      "center": 4.1,
+      "right": 8.3,
+      "far_right": 9.1
+    },
+    "nearest_obstacle_sector": "center",
+    "nearest_obstacle_distance_m": 1.1,
+    "clearance_status": "blocked"
+  }
+}
+
+Sensor attachments:
+1) Depth map visualization (red/yellow close, blue far)
+
+Return only one JSON object with keys:
+- waypoints
+- selected_waypoint_index
+- reasoning
