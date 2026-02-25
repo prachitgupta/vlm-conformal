@@ -1,345 +1,188 @@
-# 🚁 PX4 Vision-Based MPC Controller
+# vlm-conformal
 
-**Production-ready Model Predictive Control (MPC) with RGB+Depth vision for autonomous drone navigation**
+ROS 2 + PX4 workspace for comparing classical MPC and LLM-assisted local motion planning for drones using depth sensing.
 
-[![ROS2](https://img.shields.io/badge/ROS2-Humble-blue)](https://docs.ros.org/en/humble/)
-[![PX4](https://img.shields.io/badge/PX4-v1.14+-green)](https://px4.io/)
-[![Python](https://img.shields.io/badge/Python-3.10+-yellow)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg)](LICENSE)
+This repository contains a PX4/Gazebo simulation workflow and a `llm_drone` package with:
+- MPC local planners/controllers (classical baseline)
+- LLM planners that output candidate waypoints from prompt-encoded sensor/state context
+- Prompt recording utilities for cloud-LLM experiments
+- Analysis/debug tools for comparing planner behavior
 
-## 📋 Overview
+## Repository Layout
 
-This is a complete, hardware-ready implementation of vision-based autonomous drone navigation using:
-- **Model Predictive Control (MPC)** with CVXPY optimization
-- **RGB + Depth camera** for obstacle detection
-- **Real-time path planning** with obstacle avoidance
-- **PX4 Autopilot** integration via MAVSDK
-- **Gazebo Garden** simulation with realistic physics
-- **ROS2 Humble** for sensor integration
+- `px4_ws/`: ROS 2 workspace (build/install/log + source packages)
+- `px4_ws/src/llm_drone/`: main ROS 2 Python package
+- `gazebo/`: simulation-related assets/configs (if used in your setup)
+- `docs/`: notes and supporting documentation
+- `scripts/`: helper scripts
 
-### ✨ Features
+## Key Components (`llm_drone`)
 
-- ✅ **Ready for real hardware** - Tested path from simulation to Starling 2
-- ✅ **Vision-based obstacle avoidance** - Uses depth camera for 3D obstacle detection
-- ✅ **MPC trajectory optimization** - Predictive control with constraints
-- ✅ **Custom Gazebo world** - Obstacle course for testing
-- ✅ **One-command startup** - Automated tmux session management
-- ✅ **Comprehensive testing** - Automated system verification
-- ✅ **Production logging** - Real-time monitoring and debugging
+Main package path: `px4_ws/src/llm_drone/llm_drone`
 
-## 🎯 Quick Start
+- `mpc_local_planner.py`
+  - Single-integrator style MPC local planner using depth-derived obstacle points and a FIFO local obstacle map.
+  - Publishes trajectory setpoints and debug trajectory outputs.
 
-### Prerequisites
-- Ubuntu 22.04 LTS
-- 8GB RAM minimum
-- GPU recommended
+- `mpc_vision_controller.py`
+  - CVXPY-based vision MPC controller using point clouds.
+  - Serves as a stronger optimization-based baseline.
 
-### Installation (5 minutes)
+- `llm_planner.py`
+  - LLM-based planner (local Qwen via Ollama or OpenAI cloud API).
+  - Builds an environment vector from odometry + depth, composes a prompt, requests an LLM response, parses JSON, and publishes the selected waypoint/setpoint.
+  - Expected LLM output schema:
+    - `waypoints` (candidate waypoint list)
+    - `selected_waypoint_index`
+    - `reasoning`
 
-```bash
-# 1. Clone repository
-git clone <your-repo-url>
-cd px4_vision_mpc
+- `prompt_generator_samples.py`
+  - ROS-backed prompt recorder for collecting timestamped prompt samples from live runs.
+  - Useful for offline benchmarking of cloud LLMs without rerunning simulation.
 
-# 2. Run automated setup
-./install.sh
+- `performance_analyse.py`, `comparator.py`
+  - Utilities for comparison and analysis of planner outputs.
 
-# 3. Test system
-./test_system.sh
+- `dataset_generator.py`
+  - Helpers for building datasets from simulation/planner data.
 
-# 4. Start simulation
-./start_simulation.sh
-```
+## Planner Data Flow (LLM Path)
 
-That's it! The simulation will start with all components in separate tmux windows.
+1. Subscribe to vehicle odometry and depth camera.
+2. Convert depth image -> obstacle points (camera -> body -> NED).
+3. Maintain a FIFO local obstacle map consistent with MPC obstacle semantics.
+4. Build a structured environment vector (position, velocity, goal, depth sector stats, nearest obstacle features).
+5. Compose prompt (`system prompt` + deterministic text summary + numerical vector).
+6. Query LLM backend (Qwen/Ollama or OpenAI).
+7. Parse returned JSON and select the waypoint indicated by `selected_waypoint_index`.
+8. Publish trajectory point / PX4 setpoint.
 
-## 📚 Documentation
+## ROS 2 Console Entrypoints
 
-### Core Files
+Defined in `px4_ws/src/llm_drone/setup.py`:
 
-| File | Description |
-|------|-------------|
-| `SETUP.md` | Detailed installation guide |
-| `README.md` | This file - project overview |
-| `start_simulation.sh` | One-command startup script |
-| `test_system.sh` | System verification suite |
+- `ros2 run llm_drone mpc`
+- `ros2 run llm_drone mpc_local_planner`
+- `ros2 run llm_drone mpc_sim`
+- `ros2 run llm_drone mission_executor`
+- `ros2 run llm_drone llm`
+- `ros2 run llm_drone mpc_voxl`
+- `ros2 run llm_drone llm_voxl`
+- `ros2 run llm_drone performance_analyzer`
+- `ros2 run llm_drone dataset_generator`
+- `ros2 run llm_drone debug_pointcloud_obstacles`
 
-### Code Structure
+## Prerequisites (Typical)
 
-```
-px4_vision_mpc/
-├── worlds/
-│   └── obstacle_course.world          # Gazebo world with obstacles
-├── models/
-│   └── iris_depth_camera/
-│       └── model.sdf                  # Drone with RGB+Depth cameras
-├── px4_vision/
-│   ├── mpc_vision_controller.py       # Main MPC controller
-│   ├── mission_executor.py            # High-level mission management
-│   └── launch/
-│       └── launch_simulation.py       # ROS2 launch file
-├── rviz/
-│   └── px4_vision.rviz                # Visualization config
-└── scripts/
-    ├── install.sh                     # Automated installer
-    ├── start_simulation.sh            # Startup script
-    └── test_system.sh                 # Test suite
-```
+- Ubuntu 22.04
+- ROS 2 Humble
+- PX4 + Micro XRCE bridge setup
+- Gazebo (matching your PX4 simulation stack)
+- Python 3.10+
+- Python packages used by the planners (examples):
+  - `numpy`, `opencv-python`, `cv_bridge` (from ROS), `cvxpy`, `scipy`, `matplotlib`
+  - `openai` (optional, only for cloud backend)
 
-## 🚀 Usage
+Note: `px4_msgs` must be available in the sourced ROS 2 environment for publishing PX4 `TrajectorySetpoint` messages. The code has limited fallbacks when `px4_msgs` is unavailable.
 
-### Simulation
+## Build
 
-```bash
-# Start everything automatically
-./start_simulation.sh
-
-# In tmux, navigate to "Mission" window (Ctrl+B then 3)
-# Press Enter to start autonomous mission
-python3 mission_executor.py --sim
-
-# Stop everything
-./start_simulation.sh --kill
-```
-
-### Real Hardware (Starling 2)
+From the workspace root:
 
 ```bash
-# 1. Connect to drone via serial or WiFi
-# 2. Update connection in mission_executor.py
-# 3. Run MPC controller
-ros2 run px4_vision mpc_vision_controller
-
-# 4. In another terminal, execute mission
-python3 mission_executor.py
+cd /home/prachit/Desktop/vlm-conformal/px4_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select llm_drone
+source install/setup.bash
 ```
 
-## 🎮 Tmux Windows
+## Running (Typical Examples)
 
-The startup script creates 5 windows:
-
-1. **PX4-SITL** - PX4 simulation + Gazebo
-2. **XRCE-Agent** - ROS2-PX4 bridge
-3. **MPC-Controller** - Vision-based MPC
-4. **Mission** - Mission executor
-5. **Monitor** - System monitoring
-
-### Tmux Commands
-
-- `Ctrl+B` then `0-4` - Switch windows
-- `Ctrl+B` then `d` - Detach
-- `tmux attach` - Reattach
-- `Ctrl+C` in window - Stop that component
-
-## 🔧 Configuration
-
-### Goal Position
-
-Edit in `mission_executor.py`:
-```python
-self.goal_position = np.array([15.0, 10.0, 2.0])  # x, y, z in NED
-```
-
-Or pass as ROS2 parameters:
-```bash
-ros2 run px4_vision mpc_vision_controller \
-  --ros-args -p goal_x:=20.0 -p goal_y:=15.0 -p goal_z:=-3.0
-```
-
-### MPC Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `prediction_horizon` | 10 | MPC prediction steps |
-| `control_horizon` | 5 | Control input steps |
-| `dt` | 0.2 | Time step (seconds) |
-| `max_velocity` | 2.0 | Max velocity (m/s) |
-| `obstacle_threshold` | 2.5 | Detection range (m) |
-| `safety_distance` | 1.5 | Clearance (m) |
-
-### Camera Calibration
-
-For real hardware, update intrinsics in `mpc_vision_controller.py`:
-```python
-self.camera_K = np.array([
-    [fx, 0, cx],
-    [0, fy, cy],
-    [0, 0, 1]
-])
-```
-
-Get from: `ros2 topic echo /camera/camera_info`
-
-## 📊 Monitoring
-
-### View Camera Feeds
-```bash
-# RGB camera
-ros2 run rqt_image_view rqt_image_view /camera/rgb
-
-# Depth camera  
-ros2 run rqt_image_view rqt_image_view /camera/depth
-```
-
-### Monitor Topics
-```bash
-# List all active topics
-ros2 topic list
-
-# Monitor drone position
-ros2 topic echo /fmu/out/vehicle_odometry
-
-# Monitor velocity commands
-ros2 topic echo /fmu/in/setpoint_velocity
-
-# Check camera data rate
-ros2 topic hz /camera/depth
-```
-
-### RViz Visualization
-```bash
-rviz2 -d rviz/px4_vision.rviz
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Gazebo won't start**
-```bash
-killall -9 gz ruby
-# Try again
-```
-
-**No ROS2 topics**
-```bash
-# Restart Micro XRCE Agent
-killall MicroXRCEAgent
-MicroXRCEAgent udp4 -p 8888
-```
-
-**MPC solver fails**
-```bash
-# Install OSQP
-pip3 install osqp
-
-# Or reduce horizon
-ros2 param set /mpc_vision_controller prediction_horizon 5
-```
-
-**Camera data not received**
-```bash
-# Check Gazebo topics
-gz topic -l | grep camera
-
-# Verify ROS2 bridge
-ros2 topic hz /camera/rgb
-```
-
-See `SETUP.md` for detailed troubleshooting.
-
-## 📈 Performance
-
-### Tested Configurations
-
-| Configuration | Prediction Horizon | Control Rate | Success Rate |
-|--------------|-------------------|--------------|--------------|
-| Conservative | 5 | 5 Hz | 98% |
-| **Recommended** | **10** | **5 Hz** | **95%** |
-| Aggressive | 15 | 10 Hz | 90% |
-
-### Hardware Requirements
-
-- **Simulation**: 4-core CPU, 8GB RAM, GPU recommended
-- **Real Hardware**: Starling 2, VOXL 2, or compatible PX4 drone
-
-## 🔬 Algorithm Details
-
-### MPC Formulation
-
-The controller solves at each timestep:
-
-```
-min  Σ ||x_k - x_goal||²_Q + ||u_k||²_R
-s.t. x_{k+1} = x_k + u_k * dt
-     ||u_k|| ≤ v_max
-     ||x_k - obs|| ≥ safe_dist  ∀ obstacles
-```
-
-Where:
-- `x` = position [x, y, z]
-- `u` = velocity commands [vx, vy, vz]
-- `Q` = state cost matrix
-- `R` = control cost matrix
-
-### Obstacle Detection
-
-1. **Depth Image Processing**: Sample depth image at 20px intervals
-2. **3D Projection**: Convert to camera frame using intrinsics
-3. **Clustering**: Group nearby points (0.5m radius)
-4. **Transform**: Convert to global NED frame
-5. **Constraint Generation**: Add to MPC optimization
-
-## 🧪 Testing
+### MPC local planner
 
 ```bash
-# Run full test suite
-./test_system.sh
-
-# Test individual components
-ros2 run px4_vision mpc_vision_controller  # Test MPC
-python3 mission_executor.py --sim          # Test mission
+source /opt/ros/humble/setup.bash
+cd /home/prachit/Desktop/vlm-conformal/px4_ws
+source install/setup.bash
+ros2 run llm_drone mpc_local_planner
 ```
 
-## 📝 Citation
+### LLM planner (local Qwen via Ollama)
 
-If you use this code in your research, please cite:
+Make sure Ollama is running and a model is installed (for example `qwen2.5:3b`), then:
 
-```bibtex
-@software{px4_vision_mpc,
-  title = {PX4 Vision-Based MPC Controller},
-  author = {Your Name},
-  year = {2025},
-  url = {https://github.com/yourusername/px4_vision_mpc}
-}
+```bash
+source /opt/ros/humble/setup.bash
+cd /home/prachit/Desktop/vlm-conformal/px4_ws
+source install/setup.bash
+ros2 run llm_drone llm
 ```
 
-## 🤝 Contributing
+Useful ROS params (examples):
 
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+```bash
+ros2 run llm_drone llm --ros-args \
+  -p llm_provider:=qwen \
+  -p qwen_model:=qwen2.5:3b \
+  -p goal_x:=35.0 -p goal_y:=3.0 -p goal_z:=2.5 \
+  -p goal_frame:=ned
+```
 
-## 📄 License
+### LLM planner (OpenAI cloud backend)
 
-Apache 2.0 - See LICENSE file
+Set `OPENAI_API_KEY` (or use the file-based key path expected by the code), then:
 
-## 🆘 Support
+```bash
+ros2 run llm_drone llm --ros-args \
+  -p llm_provider:=openai \
+  -p openai_model:=gpt-4o-mini
+```
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/px4_vision_mpc/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/px4_vision_mpc/discussions)
-- **Email**: your.email@example.com
+## Prompt Recording for Offline LLM Evaluation
 
-## 🙏 Acknowledgments
+To collect prompt samples from a live simulation run for later cloud-LLM testing:
 
-- [PX4 Autopilot](https://px4.io/)
-- [MAVSDK](https://mavsdk.mavlink.io/)
-- [ROS2 Community](https://ros.org/)
-- [CVXPY Developers](https://www.cvxpy.org/)
+```bash
+source /opt/ros/humble/setup.bash
+cd /home/prachit/Desktop/vlm-conformal/px4_ws
+source install/setup.bash
+python3 src/llm_drone/llm_drone/prompt_generator_samples.py
+```
 
-## 🗺️ Roadmap
+This records timestamped prompt text files containing:
+- system prompt
+- deterministic environment summary `T(v)`
+- numerical environment vector `v`
 
-- [ ] Add SLAM integration
-- [ ] Implement dynamic obstacle tracking
-- [ ] Multi-drone coordination
-- [ ] Advanced path planning (RRT*, A*)
-- [ ] Machine learning-based obstacle detection
-- [ ] Hardware-in-the-loop (HITL) testing
+These samples are useful for repeated sampling / self-refinement experiments without requiring a live simulator every time.
 
----
+## Topics Used (Common)
 
-**Ready to fly autonomously! 🚁**
+The exact topic set varies by node, but commonly used topics include:
 
-For detailed setup instructions, see [SETUP.md](SETUP.md)
+- Inputs
+  - `/fmu/out/vehicle_odometry`
+  - `/depth_camera` (depth image)
+  - `/depth_camera/points` (point cloud, for `mpc_vision_controller.py`)
+
+- Outputs
+  - `/llm/trajectory`
+  - `/mpc/trajectory`
+  - `/fmu/in/trajectory_setpoint`
+  - `/fmu/in/setpoint_velocity` (fallback in some environments)
+
+## Notes for LLM Experiments
+
+- `llm_planner.py` currently parses a JSON object from the model response and selects one waypoint using `selected_waypoint_index`.
+- Prompt generation is grounded in sensor-derived obstacle features and a deterministic text translation of the environment vector.
+- For reproducible evaluations, save the prompt, raw LLM response, and resulting waypoint selection for each trial.
+
+## Development Notes
+
+- The workspace may contain generated build artifacts (`build/`, `install/`, `log/`).
+- Prompt sample directories under `generated_prompt_samples/` are generated data and can grow quickly.
+- If you are comparing LLM vs MPC, align topic timestamps and goal/frame conventions (NED vs Gazebo/ENU) before interpreting errors.
+
+## License
+
+No top-level license file is currently declared in this repository. Add one before public redistribution if needed.
