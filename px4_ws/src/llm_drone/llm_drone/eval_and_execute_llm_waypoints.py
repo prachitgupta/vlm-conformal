@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -37,11 +39,7 @@ except ImportError:
 
 
 DEFAULT_LLM_RESPONSE = (
-    '{"waypoints":[{"x":2.7,"y":0.8,"z":-2.2},{"x":3.6,"y":1.7,"z":-2.25},'
-    '{"x":4.8,"y":2.2,"z":-2.3},{"x":6.1,"y":2.1,"z":-2.35},{"x":7.4,"y":1.8,'
-    '"z":-2.4}],"selected_waypoint_index":0,"reasoning":"Center sector is blocked nearby, '
-    'so sidestep through the clearer right sectors with a smooth 5-point arc, then start '
-    'merging back toward the goal while gently descending."}'
+    '{"waypoints":[{"x":1.6,"y":5.25,"z":-2.5},{"x":2.6,"y":5.95,"z":-2.55},{"x":3.8,"y":6.45,"z":-2.55},{"x":5.1,"y":6.2,"z":-2.45},{"x":6.5,"y":5.6,"z":-2.35}],"selected_waypoint_index":0,"reasoning":"Left sectors are blocked nearby, so bypass through the clearer right side with a smooth 5-point arc, then begin turning back toward the goal while keeping safe negative altitude."}'
 )
 
 # Keep these aligned with llm_planner.py / prompt_generator_samples.py
@@ -463,6 +461,25 @@ def build_latex_style_eval_table(res: EvalResult) -> str:
     return "\n".join(lines)
 
 
+def _sanitize_for_json(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, tuple):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return _sanitize_for_json(obj.tolist())
+    if isinstance(obj, (np.floating,)):
+        val = float(obj)
+        return val if math.isfinite(val) else None
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    return obj
+
+
 class EvalAndExecuteNode(Node):
     def __init__(self):
         super().__init__("eval_and_execute_llm_waypoints")
@@ -482,6 +499,9 @@ class EvalAndExecuteNode(Node):
         self.declare_parameter("publish_rate_hz", 5.0)
         self.declare_parameter("execute_selected_only", False)
         self.declare_parameter("max_obstacle_points_eval", 200)
+        self.declare_parameter("save_eval_logs", True)
+        self.declare_parameter("eval_log_dir", "/tmp/llm_eval_logs")
+        self.declare_parameter("print_latex_stdout", True)
 
         goal_input = np.array([
             float(self.get_parameter("goal_x").value),
@@ -617,7 +637,13 @@ class EvalAndExecuteNode(Node):
         latex_table = build_latex_style_eval_table(res)
         for line in latex_table.splitlines():
             self.get_logger().info(line)
+        if bool(self.get_parameter("print_latex_stdout").value):
+            print("\n===== COPY-PASTE LATEX TABLE START =====")
+            print(latex_table)
+            print("===== COPY-PASTE LATEX TABLE END =====\n")
         self.get_logger().info(f"Metrics: {json.dumps(res.metrics, indent=2)}")
+        if bool(self.get_parameter("save_eval_logs").value):
+            self.save_evaluation_logs(res, latex_table, obstacle_snapshot.shape[0] if obstacle_snapshot is not None else 0)
 
         if res.parsed is None:
             self.get_logger().warn("Evaluation parse failed. Waypoints will NOT be published to PX4.")
@@ -637,6 +663,46 @@ class EvalAndExecuteNode(Node):
             self.get_logger().warn(
                 f"Evaluation flagged issues, but executing anyway ({mode}). Review warnings above."
             )
+
+    def save_evaluation_logs(self, res: EvalResult, latex_table: str, obstacle_count: int) -> None:
+        out_dir = Path(str(self.get_parameter("eval_log_dir").value)).expanduser()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        stamp = now.strftime("%Y%m%dT%H%M%S_%fZ")
+
+        tex_path = out_dir / f"{stamp}_eval_table.tex"
+        json_path = out_dir / f"{stamp}_eval_metrics.json"
+        response_path = out_dir / f"{stamp}_llm_response.json"
+
+        tex_path.write_text(latex_table + "\n")
+
+        payload = {
+            "timestamp_utc": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "goal_ned_m": _sanitize_for_json(self.goal_ned),
+            "current_position_ned_m": _sanitize_for_json(self.current_position),
+            "current_velocity_mps": _sanitize_for_json(self.current_velocity),
+            "obstacle_snapshot_count": int(obstacle_count),
+            "result": {
+                "passed": bool(res.passed),
+                "format_pass": bool(res.format_pass),
+                "kinematic_pass": bool(res.kinematic_pass),
+                "progress_pass": bool(res.progress_pass),
+                "safety_pass": bool(res.safety_pass),
+                "errors": list(res.errors),
+                "warnings": list(res.warnings),
+                "metrics": _sanitize_for_json(res.metrics),
+            },
+        }
+        json_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+        if res.parsed is not None:
+            raw_payload = _sanitize_for_json(res.parsed.get("raw", {}))
+            response_path.write_text(json.dumps(raw_payload, indent=2) + "\n")
+
+        self.get_logger().info(f"Saved evaluation table: {tex_path}")
+        self.get_logger().info(f"Saved evaluation metrics: {json_path}")
+        if res.parsed is not None:
+            self.get_logger().info(f"Saved parsed LLM response: {response_path}")
 
     def execution_loop(self) -> None:
         if not self.execution_armed:

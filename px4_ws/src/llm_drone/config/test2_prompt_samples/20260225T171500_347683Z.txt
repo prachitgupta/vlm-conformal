@@ -1,0 +1,220 @@
+timestamp_utc: 2026-02-25T17:15:00.347Z
+
+=== SYSTEM PROMPT ===
+You are the motion planner for an autonomous quadrotor.
+
+SECTION 1: CONTEXT AND INSTRUCTIONS
+Task:
+- Plan a short local trajectory of the next 5 waypoints (not just one waypoint).
+- The 5-waypoint sequence should be consistent, smooth, collision-safe, and useful as a local trajectory label.
+- Use all provided context, including odometry-derived state and obstacle/depth cues.
+
+Frame and units:
+- Coordinate frame is NED (North-East-Down), meters.
+- x: North, y: East, z: Down.
+- More negative z means higher altitude above ground.
+
+Operational constraints:
+- Hard safety: never place waypoints inside or too close to obstacles.
+- Keep at least 1.5 m obstacle clearance when feasible.
+- Keep waypoints dynamically feasible and smooth (no abrupt reversals or zig-zags).
+- Prefer forward progress toward the goal.
+- First waypoint must be local: at most 3.0 m from current position.
+- Consecutive waypoint spacing should usually be 0.5 m to 3.0 m unless safety requires shorter moves.
+- Respect altitude safety: keep z < 0 unless explicitly instructed otherwise.
+
+Planning objective priority:
+1) Safety and feasibility
+2) Progress to goal
+3) Smoothness and efficiency
+4) Consistent 5-point local trajectory output
+
+SECTION 2: FEW-SHOT DEMONSTRATIONS
+Example A (clear corridor):
+Input summary:
+- current_position: [0.0, 0.0, -2.0]
+- goal_position: [10.0, 0.0, -2.0]
+- obstacle cue: clear ahead
+Output:
+{
+  "waypoints": [
+    {"x": 1.2, "y": 0.0, "z": -2.0},
+    {"x": 2.4, "y": 0.0, "z": -2.0},
+    {"x": 3.6, "y": 0.0, "z": -2.0},
+    {"x": 4.8, "y": 0.0, "z": -2.0},
+    {"x": 6.0, "y": 0.0, "z": -2.0}
+  ],
+  "selected_waypoint_index": 0,
+  "reasoning": "Clear corridor, so generate a smooth straight 5-point local trajectory toward goal."
+}
+
+Example B (obstacle ahead, bypass on right):
+Input summary:
+- current_position: [0.0, 0.0, -2.0]
+- goal_position: [10.0, 0.0, -2.0]
+- obstacle cue: near obstacle centered ahead, right side clearer
+Output:
+{
+  "waypoints": [
+    {"x": 1.0, "y": 0.8, "z": -2.0},
+    {"x": 2.0, "y": 1.5, "z": -2.0},
+    {"x": 3.1, "y": 2.0, "z": -2.0},
+    {"x": 4.3, "y": 1.8, "z": -2.0},
+    {"x": 5.4, "y": 1.1, "z": -2.0}
+  ],
+  "selected_waypoint_index": 0,
+  "reasoning": "Bypass obstacle on clearer right side, then begin merging back toward goal line."
+}
+
+Example C (need vertical avoidance):
+Input summary:
+- current_position: [0.0, 0.0, -2.0]
+- goal_position: [8.0, 0.0, -2.0]
+- obstacle cue: obstacle near current altitude directly ahead, vertical clearance available
+Output:
+{
+  "waypoints": [
+    {"x": 0.9, "y": 0.0, "z": -2.5},
+    {"x": 1.8, "y": 0.0, "z": -3.0},
+    {"x": 2.8, "y": 0.0, "z": -3.2},
+    {"x": 4.0, "y": 0.0, "z": -3.1},
+    {"x": 5.1, "y": 0.0, "z": -2.8}
+  ],
+  "selected_waypoint_index": 0,
+  "reasoning": "Use a smooth 5-point climb in NED (more negative z) to clear obstacle, then level back."
+}
+
+SECTION 3: EXPECTED OUTPUT
+Return ONLY one valid JSON object. No markdown. No extra text.
+
+Required schema (exact top-level keys):
+{
+  "waypoints": [
+    {"x": <float>, "y": <float>, "z": <float>},
+    {"x": <float>, "y": <float>, "z": <float>},
+    {"x": <float>, "y": <float>, "z": <float>},
+    {"x": <float>, "y": <float>, "z": <float>},
+    {"x": <float>, "y": <float>, "z": <float>}
+  ],
+  "selected_waypoint_index": <integer>,
+  "reasoning": "<short plain text>"
+}
+
+Schema rules:
+- "waypoints" must contain exactly 5 waypoint objects.
+- Every waypoint must include numeric x, y, z (floats or ints are acceptable JSON numbers).
+- Waypoints must be ordered in execution order from immediate next step to farther local lookahead.
+- "selected_waypoint_index" must be an integer and should be 0 (controller executes the first point first).
+- "reasoning" must be short (<= 35 words).
+
+SECTION 4: VERIFICATION LAYER (INTERNAL CHECK BEFORE OUTPUT)
+Before finalizing, verify and repair if needed:
+1) JSON is syntactically valid and contains only the required top-level keys.
+2) "waypoints" length is exactly 5 and each waypoint has numeric x, y, z.
+3) "selected_waypoint_index" is exactly 0 and valid for the list.
+4) First waypoint is within 3.0 m of current position.
+5) Consecutive waypoint transitions are smooth and feasible (no abrupt reversals).
+6) Waypoints maintain obstacle clearance and do not cut through obvious blocked sectors.
+7) Trajectory generally progresses toward goal unless safety forces a temporary detour.
+If any check fails, repair and re-validate before output.
+
+=== USER PROMPT ===
+Use the fixed planning policy exactly as defined in the system prompt.
+
+Dynamic Environment Section (T(v)):
+Environment section (T(v)):
+- Current position NED is (0.73, 4.67, -2.48) m.
+- Current velocity is (0.00, -0.00, -0.00) m/s (speed 0.00 m/s).
+- Goal position NED is (35.00, 3.00, 2.50) m.
+- Goal delta from current state is (34.27, -1.67, 4.98) m with distance 34.67 m.
+- MPC-consistent obstacle pipeline: mpc_consistent_depth_to_body_to_ned_fifo_local_map.
+- Current depth frame obstacle points (NED): 326; FIFO local obstacle map size: 200 points. Nearest obstacle in NED is at (0.28, 5.99, -2.39) m, relative vector (-0.45, 1.33, 0.09) m, distance 1.40 m.
+- Depth validity fraction is 0.62. Global nearest obstacle distance is 1.20 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [1.20, 1.21, 2.69, 4.13, 4.13] m.
+- Nearest obstacle sector is far_left at 1.20 m and clearance status is blocked.
+- Lateral planning hint: right side is clearer.
+
+Numerical Environment Vector v:
+{
+  "current_position_ned_m": [
+    0.7326536774635315,
+    4.66836404800415,
+    -2.483799934387207
+  ],
+  "current_velocity_mps": [
+    0.0015632379800081253,
+    -0.002239290624856949,
+    -7.709376950515434e-05
+  ],
+  "goal_position_ned_m": [
+    35.0,
+    3.0,
+    2.5
+  ],
+  "goal_delta_m": [
+    34.26734632253647,
+    -1.6683640480041504,
+    4.983799934387207
+  ],
+  "distance_to_goal_m": 34.668036061642205,
+  "speed_mps": 0.0027320466566309993,
+  "heading_to_goal_xy_rad": -0.048648286820513496,
+  "obstacle_features_ned": {
+    "pipeline": "mpc_consistent_depth_to_body_to_ned_fifo_local_map",
+    "depth_camera_params": {
+      "hfov_deg": 72.995,
+      "vfov_deg": 58.053,
+      "depth_min_m": 0.2,
+      "depth_max_m": 19.1,
+      "sample_count_per_frame_target": 500
+    },
+    "latest_depth_frame_obstacle_points_ned_count": 326,
+    "local_obstacle_fifo_count": 200,
+    "nearest_obstacle_distance_ned_m": 1.4024003125637852,
+    "nearest_obstacle_position_ned_m": [
+      0.28272617001124034,
+      5.993585086994357,
+      -2.393905148473407
+    ],
+    "nearest_obstacle_relative_ned_m": [
+      -0.44992750745229115,
+      1.3252210389902066,
+      0.08989478591379996
+    ],
+    "mpc_nearest_obstacle_eq11_x_min_ned_m": [
+      0.28272617001124034,
+      5.993585086994357,
+      -2.393905148473407
+    ]
+  },
+  "depth_features": {
+    "valid_fraction": 0.6245540364583333,
+    "global_min_m": 1.2021039724349976,
+    "global_mean_m": 4.0414628982543945,
+    "sector_min_m": {
+      "far_left": 1.2021039724349976,
+      "left": 1.2060025930404663,
+      "center": 2.6896896362304688,
+      "right": 4.129412651062012,
+      "far_right": 4.132107734680176
+    },
+    "sector_mean_m": {
+      "far_left": 1.7219352722167969,
+      "left": 1.4927890300750732,
+      "center": 8.140043258666992,
+      "right": 6.166813373565674,
+      "far_right": 4.376338481903076
+    },
+    "nearest_obstacle_sector": "far_left",
+    "nearest_obstacle_distance_m": 1.2021039724349976,
+    "clearance_status": "blocked"
+  }
+}
+
+Sensor attachments:
+1) Depth map visualization (red/yellow close, blue far)
+
+Return only one JSON object with keys:
+- waypoints
+- selected_waypoint_index
+- reasoning

@@ -10,6 +10,9 @@ BRIDGE_STARTUP_BUFFER_SEC="${BRIDGE_STARTUP_BUFFER_SEC:-12}"
 DELAY_BEFORE_AGENT="${DELAY_BEFORE_AGENT:-2}"
 DELAY_BEFORE_RQT="${DELAY_BEFORE_RQT:-2}"
 GAZEBO_CONTROL_SERVICE="${GAZEBO_CONTROL_SERVICE:-/world/${WORLD_NAME}/control}"
+export ENABLE_GZ_VIDEO_RECORDING="${ENABLE_GZ_VIDEO_RECORDING:-1}"
+export GZ_VIDEO_RECORD_DIR="${GZ_VIDEO_RECORD_DIR:-${HOME}/test_run}"
+export GZ_VIDEO_RECORD_FORMAT="${GZ_VIDEO_RECORD_FORMAT:-mp4}"
 
 add_bridge_arg() {
   local arg="$1"
@@ -133,6 +136,7 @@ open_term "MicroXRCEAgent" "echo ROS_DOMAIN_ID=\${ROS_DOMAIN_ID:-0}; MicroXRCEAg
 sleep "${DELAY_BEFORE_AGENT}"
 
 echo "Opening Terminal 2: PX4 + Gazebo"
+echo "Gazebo recording: ENABLE_GZ_VIDEO_RECORDING=${ENABLE_GZ_VIDEO_RECORDING}, output dir=${GZ_VIDEO_RECORD_DIR}"
 open_term "PX4 + Gazebo" "echo ROS_DOMAIN_ID=\${ROS_DOMAIN_ID:-0}; cd '${PX4_DIR}' && ./Tools/simulation/gz/launch_obstacle_avoidance_x500.sh"
 
 echo "Waiting ${BRIDGE_STARTUP_BUFFER_SEC}s before launching ROS-GZ bridge..."

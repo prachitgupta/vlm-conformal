@@ -39,6 +39,8 @@ import os
 
 # ROS2 message types
 from sensor_msgs.msg import Image
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PoseStamped
 from px4_msgs.msg import TrajectorySetpoint, VehicleOdometry
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +69,7 @@ DEBUG_PLOT_ENABLED = True  # non-blocking 2D MPC debug plots (optional)
 DEBUG_PLOT_RATE_HZ = 4.0   # plot refresh rate, decoupled from MPC loop
 DEBUG_PLOT_OBS_MAX = 200   # max local obstacle points shown in debug plot
 DEBUG_PATH_HISTORY_LEN = 300
+MPC_LABEL_WAYPOINT_COUNT = 5  # publish next 5 waypoints from final solved X_opt for dataset labels
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -572,6 +575,9 @@ class MPCUAVNode(Node):
             TrajectorySetpoint,
             '/fmu/in/trajectory_setpoint',
             px4_qos)
+        # Dataset-label publishers derived from the final solved MPC trajectory X_opt.
+        self._mpc_label_path_pub = self.create_publisher(Path, '/mpc/trajectory_sequence', 10)
+        self._mpc_traj_point_pub = self.create_publisher(PoseStamped, '/mpc/trajectory', 10)
 
         # ── MPC components ──────────────────────────────────────────────────
         self._mpc       = MPCPlanner()
@@ -697,10 +703,23 @@ class MPCUAVNode(Node):
         self._U_warm      = np.roll(U_opt, -1, axis=0)
         self._U_warm[-1]  = U_opt[-1]
 
+        # Label waypoints come from the *final* solved trajectory and are timestamped
+        # in the same MPC tick as the executed first setpoint.
+        label_waypoints_ned = X_opt[1:1 + MPC_LABEL_WAYPOINT_COUNT, :3]
+        if label_waypoints_ned.shape[0] == 0:
+            self.get_logger().warn('MPC solve returned no future states in X_opt; skipping publish')
+            return
+
+        now_ros = self.get_clock().now()
+        stamp_msg = now_ros.to_msg()
+        stamp_us = now_ros.nanoseconds // 1000
+        self._publish_mpc_label_trajectory(label_waypoints_ned, stamp_msg)
+
         # ── Step 3: publish first optimal control u*(1) ─────────────────────
         u_cmd = U_opt[0]                    # [vx_ref, vy_ref, vz_ref] NED
-        pos_sp_ned = X_opt[1, :3]
-        self._publish_setpoint(pos_sp_ned, u_cmd)
+        pos_sp_ned = label_waypoints_ned[0]
+        self._publish_mpc_trajectory_point(pos_sp_ned, stamp_msg)
+        self._publish_setpoint(pos_sp_ned, u_cmd, stamp_us=stamp_us)
         self._log_setpoint_debug(x0, x_ref, x_min, X_opt, pos_sp_ned, u_cmd)
         self._debug_plotter.submit(
             x0=x0,
@@ -721,13 +740,13 @@ class MPCUAVNode(Node):
         """Separate timer loop for debug plotting (main thread-safe)."""
         self._debug_plotter.draw_latest()
 
-    def _publish_setpoint(self, pos_ned: np.ndarray, vel_ned: np.ndarray) -> None:
+    def _publish_setpoint(self, pos_ned: np.ndarray, vel_ned: np.ndarray, stamp_us: int | None = None) -> None:
         """
         Publish TrajectorySetpoint (position + velocity feedforward) to PX4.
         PX4 TrajectorySetpoint uses NED frame with NaN for unused fields.
         """
         sp = TrajectorySetpoint()
-        sp.timestamp = self.get_clock().now().nanoseconds // 1000   # µs
+        sp.timestamp = int(stamp_us) if stamp_us is not None else self.get_clock().now().nanoseconds // 1000   # µs
 
         # position setpoint [m] NED
         sp.position[0] = float(pos_ned[0])
@@ -747,6 +766,44 @@ class MPCUAVNode(Node):
         sp.yawspeed        = float('nan')
 
         self._sp_pub.publish(sp)
+
+    def _publish_mpc_label_trajectory(self, waypoints_ned: np.ndarray, stamp_msg) -> None:
+        """
+        Publish timestamped MPC label trajectory (next 5 waypoints) for dataset generation.
+        Waypoints are taken directly from the final solved X_opt[1:1+K, :3].
+        """
+        path = Path()
+        path.header.stamp = stamp_msg
+        path.header.frame_id = 'ned'
+
+        if waypoints_ned.shape[0] < MPC_LABEL_WAYPOINT_COUNT:
+            self.get_logger().warn(
+                f'MPC label trajectory shorter than expected: {waypoints_ned.shape[0]} < {MPC_LABEL_WAYPOINT_COUNT}'
+            )
+
+        for idx, p in enumerate(waypoints_ned):
+            pose = PoseStamped()
+            pose.header.stamp = stamp_msg
+            pose.header.frame_id = 'ned'
+            pose.pose.position.x = float(p[0])
+            pose.pose.position.y = float(p[1])
+            pose.pose.position.z = float(p[2])
+            # Orientation unused for label trajectory; identity quaternion for completeness.
+            pose.pose.orientation.w = 1.0
+            path.poses.append(pose)
+
+        self._mpc_label_path_pub.publish(path)
+
+    def _publish_mpc_trajectory_point(self, pos_ned: np.ndarray, stamp_msg) -> None:
+        """Publish the executed first waypoint for compatibility with /mpc/trajectory consumers."""
+        msg = PoseStamped()
+        msg.header.stamp = stamp_msg
+        msg.header.frame_id = 'ned'
+        msg.pose.position.x = float(pos_ned[0])
+        msg.pose.position.y = float(pos_ned[1])
+        msg.pose.position.z = float(pos_ned[2])
+        msg.pose.orientation.w = 1.0
+        self._mpc_traj_point_pub.publish(msg)
 
     def _log_setpoint_debug(self,
                             x0: np.ndarray,

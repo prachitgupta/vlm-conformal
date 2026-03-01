@@ -6,6 +6,11 @@ CFG_DIR="${PX4_DIR}/Tools/simulation/gz/config"
 WORLD_FILE="${PX4_DIR}/Tools/simulation/gz/worlds/obstacle_avoidance.sdf"
 GUI_CFG="${CFG_DIR}/obstacle_avoidance_freelook.gui.config"
 ENV_CFG="${CFG_DIR}/obstacle_avoidance_x500.env"
+ENABLE_GZ_VIDEO_RECORDING="${ENABLE_GZ_VIDEO_RECORDING:-1}"
+GZ_VIDEO_RECORD_DIR="${GZ_VIDEO_RECORD_DIR:-${HOME}/test_run}"
+GZ_VIDEO_RECORD_FORMAT="${GZ_VIDEO_RECORD_FORMAT:-mp4}"
+VIDEO_RECORD_SERVICE=""
+VIDEO_RECORD_FILE=""
 
 if [[ ! -f "${WORLD_FILE}" ]]; then
   echo "World file not found: ${WORLD_FILE}"
@@ -55,6 +60,54 @@ GZ_GUI_PID=$!
 
 sleep 1
 
+start_video_recording() {
+  if [[ "${ENABLE_GZ_VIDEO_RECORDING}" != "1" ]]; then
+    return 0
+  fi
+
+  mkdir -p "${GZ_VIDEO_RECORD_DIR}"
+
+  local attempt services
+  for attempt in $(seq 1 20); do
+    services="$(gz service -l 2>/dev/null || true)"
+    VIDEO_RECORD_SERVICE="$(grep -E '^/gui/record_video$|/record_video$' <<< "${services}" | head -n1 || true)"
+    [[ -n "${VIDEO_RECORD_SERVICE}" ]] && break
+    sleep 0.25
+  done
+
+  if [[ -z "${VIDEO_RECORD_SERVICE}" ]]; then
+    echo "Warning: video recording service not found; skipping auto-record."
+    return 0
+  fi
+
+  VIDEO_RECORD_FILE="${GZ_VIDEO_RECORD_DIR}/gazebo_$(date +%Y%m%d_%H%M%S).${GZ_VIDEO_RECORD_FORMAT}"
+  local req
+  req="$(printf 'start: true\nformat: "%s"\nsave_filename: "%s"' "${GZ_VIDEO_RECORD_FORMAT}" "${VIDEO_RECORD_FILE}")"
+
+  if gz service -s "${VIDEO_RECORD_SERVICE}" \
+      --reqtype gz.msgs.VideoRecord \
+      --reptype gz.msgs.Boolean \
+      --timeout 3000 \
+      --req "${req}" >/dev/null 2>&1; then
+    echo "Gazebo video recording started: ${VIDEO_RECORD_FILE}"
+  else
+    echo "Warning: failed to start Gazebo video recording."
+    VIDEO_RECORD_FILE=""
+  fi
+}
+
+stop_video_recording() {
+  if [[ -z "${VIDEO_RECORD_SERVICE}" ]]; then
+    return 0
+  fi
+
+  gz service -s "${VIDEO_RECORD_SERVICE}" \
+    --reqtype gz.msgs.VideoRecord \
+    --reptype gz.msgs.Boolean \
+    --timeout 2000 \
+    --req 'stop: true' >/dev/null 2>&1 || true
+}
+
 # Best-effort: switch view mode to orbit (free-look style controls).
 gz service -s /gui/camera/view_control \
   --reqtype gz.msgs.StringMsg \
@@ -62,7 +115,10 @@ gz service -s /gui/camera/view_control \
   --timeout 1000 \
   --req 'data: "orbit"' >/dev/null 2>&1 || true
 
+start_video_recording
+
 cleanup() {
+  stop_video_recording
   kill "${GZ_GUI_PID}" "${GZ_SERVER_PID}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM

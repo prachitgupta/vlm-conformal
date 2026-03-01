@@ -37,7 +37,7 @@ except ImportError:
 
 
 DEFAULT_PROMPT_FILE = (Path(__file__).resolve().parent / "../config/llm_prompt.txt").resolve()
-DEFAULT_OUTPUT_DIR = (Path(__file__).resolve().parent / "../config/generated_prompt_samples").resolve()
+DEFAULT_OUTPUT_DIR = (Path(__file__).resolve().parent / "../config/test2_prompt_samples").resolve()
 
 # Keep camera/depth settings aligned with llm_planner.py / mpc_local_planner.py
 DEPTH_HFOV_DEG = 72.995

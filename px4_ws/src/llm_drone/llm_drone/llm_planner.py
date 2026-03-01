@@ -20,6 +20,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
+from nav_msgs.msg import Path
 from geometry_msgs.msg import TwistStamped, PoseStamped
 from cv_bridge import CvBridge
 import cv2
@@ -49,6 +50,7 @@ DEPTH_MIN_M = 0.2
 DEPTH_MAX_M = 19.1
 OBS_FIFO_LEN = 200
 MPC_DEPTH_SAMPLE_COUNT = 500
+LLM_WAYPOINT_COUNT = 5
 
 
 class LocalObstacleMap:
@@ -220,6 +222,8 @@ class LLMTrajectoryPlanner(Node):
         # Publishers
         self.llm_traj_pub = self.create_publisher(
             PoseStamped, '/llm/trajectory', 10)
+        self.llm_traj_seq_pub = self.create_publisher(
+            Path, '/llm/trajectory_sequence', 10)
         # PX4 setpoint publishers (preferred for Gazebo PX4 offboard)
         if HAS_PX4_MSGS:
             self.traj_setpoint_pub = self.create_publisher(
@@ -589,20 +593,24 @@ class LLMTrajectoryPlanner(Node):
         
         # Query LLM
         try:
-            next_position = self.query_llm()
+            next_position, llm_waypoints = self.query_llm()
             
             if next_position is not None:
                 # Store trajectory
                 self.llm_trajectory.append(next_position)
-                
-                # Publish trajectory
+
+                # Publish timestamped single-point + 5-waypoint sequence using same tick time.
+                now_ros = self.get_clock().now()
+                stamp_msg = now_ros.to_msg()
                 traj_msg = PoseStamped()
-                traj_msg.header.stamp = self.get_clock().now().to_msg()
-                traj_msg.header.frame_id = 'map'
+                traj_msg.header.stamp = stamp_msg
+                traj_msg.header.frame_id = 'ned'
                 traj_msg.pose.position.x = next_position[0]
                 traj_msg.pose.position.y = next_position[1]
                 traj_msg.pose.position.z = next_position[2]
+                traj_msg.pose.orientation.w = 1.0
                 self.llm_traj_pub.publish(traj_msg)
+                self.publish_llm_trajectory_sequence(llm_waypoints, stamp_msg)
                 
                 # Publish control command to PX4
                 if HAS_PX4_MSGS:
@@ -637,7 +645,7 @@ class LLMTrajectoryPlanner(Node):
         return self.client
 
     def query_llm(self):
-        """Query the configured LLM backend for the next waypoint."""
+        """Query the configured LLM backend and enforce an exact 5-waypoint output."""
         
         env_vector = self.build_environment_vector()
         env_text = self.translate_vector_to_nlp(env_vector)
@@ -663,31 +671,56 @@ class LLMTrajectoryPlanner(Node):
             if isinstance(data, dict) and "waypoints" in data:
                 waypoints = data.get("waypoints", [])
                 selected_idx = int(data.get("selected_waypoint_index", 0))
-                if not waypoints:
-                    raise ValueError("Empty waypoints list")
+                if not isinstance(waypoints, list):
+                    raise ValueError("waypoints must be a list")
+                if len(waypoints) != LLM_WAYPOINT_COUNT:
+                    raise ValueError(
+                        f"Expected exactly {LLM_WAYPOINT_COUNT} waypoints, got {len(waypoints)}"
+                    )
                 if selected_idx < 0 or selected_idx >= len(waypoints):
                     raise ValueError("selected_waypoint_index out of range")
+                if selected_idx != 0:
+                    raise ValueError("selected_waypoint_index must be 0 for 5-waypoint rollout execution")
 
-                wp = waypoints[selected_idx]
-                next_position = np.array([
-                    float(wp['x']),
-                    float(wp['y']),
-                    float(wp['z'])
-                ])
+                llm_waypoints = []
+                for i, pt in enumerate(waypoints):
+                    wp_xyz = np.array([
+                        float(pt['x']),
+                        float(pt['y']),
+                        float(pt['z'])
+                    ], dtype=float)
+                    if not np.all(np.isfinite(wp_xyz)):
+                        raise ValueError(f"waypoint {i} contains non-finite values")
+                    llm_waypoints.append(wp_xyz)
+
+                next_position = llm_waypoints[selected_idx]
             else:
-                # Backward-compatible fallback schema
-                next_position = np.array([
-                    float(data['x']),
-                    float(data['y']),
-                    float(data['z'])
-                ])
+                raise ValueError("Missing required 'waypoints' schema; fallback single-point schema disabled")
 
             self.get_logger().info(f"Reasoning: {data.get('reasoning', 'N/A')}")
-            return next_position
+            return next_position, llm_waypoints
             
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             self.get_logger().error(f'Failed to parse LLM response: {e}')
-            return None
+            return None, None
+
+    def publish_llm_trajectory_sequence(self, waypoints_ned, stamp_msg):
+        """Publish the full 5-waypoint LLM rollout used for comparison/dataset debugging."""
+        if waypoints_ned is None:
+            return
+        path = Path()
+        path.header.stamp = stamp_msg
+        path.header.frame_id = 'ned'
+        for wp in waypoints_ned:
+            pose = PoseStamped()
+            pose.header.stamp = stamp_msg
+            pose.header.frame_id = 'ned'
+            pose.pose.position.x = float(wp[0])
+            pose.pose.position.y = float(wp[1])
+            pose.pose.position.z = float(wp[2])
+            pose.pose.orientation.w = 1.0
+            path.poses.append(pose)
+        self.llm_traj_seq_pub.publish(path)
 
     def query_openai_model(self, user_message):
         """Query OpenAI cloud model (kept as optional backend)."""

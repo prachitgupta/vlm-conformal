@@ -140,6 +140,7 @@ setup(
         'llm_voxl = llm_drone.voxl_llm_planner:main',
         'performance_analyzer = llm_drone.performance_analyse:main',
         'dataset_generator = llm_drone.dataset_generator:main',
+        'dataset_generator_sync = llm_drone.dataset_generator_sync:main',
         'debug_pointcloud_obstacles = llm_drone.debug_pointcloud_obstacles:main',
         ],
     },
