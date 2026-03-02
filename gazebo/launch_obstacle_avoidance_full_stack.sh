@@ -5,14 +5,18 @@ PX4_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 WORLD_NAME="${WORLD_NAME:-obstacle_avoidance}"
 MODEL_INSTANCE="${MODEL_INSTANCE:-x500_depth_0}"
 
-# Fixed startup buffer before launching full bridges.
-BRIDGE_STARTUP_BUFFER_SEC="${BRIDGE_STARTUP_BUFFER_SEC:-12}"
-DELAY_BEFORE_AGENT="${DELAY_BEFORE_AGENT:-2}"
+# Ordered startup delays and timeouts.
+GZ_PUBLISH_TIMEOUT_SEC="${GZ_PUBLISH_TIMEOUT_SEC:-40}"
+DELAY_BEFORE_AGENT="${DELAY_BEFORE_AGENT:-3}"
 DELAY_BEFORE_RQT="${DELAY_BEFORE_RQT:-2}"
+DELAY_BEFORE_QGC="${DELAY_BEFORE_QGC:-2}"
 GAZEBO_CONTROL_SERVICE="${GAZEBO_CONTROL_SERVICE:-/world/${WORLD_NAME}/control}"
-export ENABLE_GZ_VIDEO_RECORDING="${ENABLE_GZ_VIDEO_RECORDING:-1}"
+export ENABLE_GZ_VIDEO_RECORDING="${ENABLE_GZ_VIDEO_RECORDING:-0}"
 export GZ_VIDEO_RECORD_DIR="${GZ_VIDEO_RECORD_DIR:-${HOME}/test_run}"
 export GZ_VIDEO_RECORD_FORMAT="${GZ_VIDEO_RECORD_FORMAT:-mp4}"
+X500_ENABLE_GZ_VIDEO_RECORDING="${X500_ENABLE_GZ_VIDEO_RECORDING:-1}"
+ENABLE_FINAL_GZ_VIDEO_RECORDING="${ENABLE_FINAL_GZ_VIDEO_RECORDING:-0}"
+QGC_APPIMAGE="${QGC_APPIMAGE:-${HOME}/Downloads/QGroundControl.AppImage}"
 
 add_bridge_arg() {
   local arg="$1"
@@ -115,6 +119,88 @@ open_term() {
   esac
 }
 
+wait_for_gz_publishing() {
+  local deadline now topics
+  deadline=$((SECONDS + GZ_PUBLISH_TIMEOUT_SEC))
+  while true; do
+    topics="$(gz topic -l 2>/dev/null || true)"
+    if grep -qE "^/world/${WORLD_NAME}/clock$|^/clock$" <<< "${topics}"; then
+      echo "Gazebo topic check passed."
+      return 0
+    fi
+
+    now=$SECONDS
+    if (( now >= deadline )); then
+      echo "Error: Gazebo topics are not being published within ${GZ_PUBLISH_TIMEOUT_SEC}s."
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+resolve_qgc_appimage() {
+  if [[ -f "${QGC_APPIMAGE}" ]]; then
+    echo "${QGC_APPIMAGE}"
+    return 0
+  fi
+
+  local detected
+  detected="$(find "${HOME}/Downloads" -maxdepth 1 -type f \( -iname "QGroundControl*.AppImage" -o -iname "*qgc*.AppImage" \) | head -n1 || true)"
+  if [[ -n "${detected}" ]]; then
+    echo "${detected}"
+    return 0
+  fi
+
+  return 1
+}
+
+start_video_recording() {
+  if [[ "${ENABLE_FINAL_GZ_VIDEO_RECORDING}" != "1" ]]; then
+    echo "Final video recording step disabled (ENABLE_FINAL_GZ_VIDEO_RECORDING=${ENABLE_FINAL_GZ_VIDEO_RECORDING})."
+    return 0
+  fi
+
+  if ! mkdir -p "${GZ_VIDEO_RECORD_DIR}"; then
+    echo "Warning: unable to create video output dir: ${GZ_VIDEO_RECORD_DIR}"
+    return 0
+  fi
+
+  local services record_service req video_file
+  services="$(gz service -l 2>/dev/null || true)"
+  record_service="$(grep -E '^/gui/record_video$|/record_video$' <<< "${services}" | head -n1 || true)"
+  if [[ -z "${record_service}" ]]; then
+    echo "Warning: video recording service not found; skipping recording start."
+    return 0
+  fi
+
+  video_file="${GZ_VIDEO_RECORD_DIR}/gazebo_$(date +%Y%m%d_%H%M%S).${GZ_VIDEO_RECORD_FORMAT}"
+  req="$(printf 'start: true\nformat: "%s"\nsave_filename: "%s"' "${GZ_VIDEO_RECORD_FORMAT}" "${video_file}")"
+
+  if gz service -s "${record_service}" \
+      --reqtype gz.msgs.VideoRecord \
+      --reptype gz.msgs.Boolean \
+      --timeout 3000 \
+      --req "${req}" >/dev/null 2>&1; then
+    echo "Gazebo video recording started: ${video_file}"
+  else
+    echo "Warning: failed to start Gazebo video recording."
+  fi
+}
+
+get_depth_image_topic() {
+  local bridge_arg topic
+  for bridge_arg in "${BRIDGE_ARGS[@]}"; do
+    topic="${bridge_arg%%@*}"
+    if [[ "${bridge_arg}" == *"@sensor_msgs/msg/Image["* ]] && [[ "${topic}" == *depth* ]]; then
+      echo "${topic}"
+      return 0
+    fi
+  done
+
+  echo "/depth_camera"
+  return 0
+}
+
 TERM_APP="$(detect_terminal || true)"
 if [[ -z "${TERM_APP}" ]]; then
   echo "No supported terminal found. Install one of: gnome-terminal, konsole, xterm."
@@ -130,17 +216,13 @@ BRIDGE_ARGS=(
   "${GAZEBO_CONTROL_SERVICE}@ros_gz_interfaces/srv/ControlWorld@gz.msgs.WorldControl@gz.msgs.Boolean"
 )
 
-echo "Opening Terminal 1: MicroXRCEAgent"
-open_term "MicroXRCEAgent" "echo ROS_DOMAIN_ID=\${ROS_DOMAIN_ID:-0}; MicroXRCEAgent udp4 -p 8888"
+echo "Opening Terminal 1: PX4 + Gazebo"
+echo "Passing ENABLE_GZ_VIDEO_RECORDING=${X500_ENABLE_GZ_VIDEO_RECORDING} to x500 launcher"
+open_term "PX4 + Gazebo" "echo ROS_DOMAIN_ID=\${ROS_DOMAIN_ID:-0}; cd '${PX4_DIR}' && ENABLE_GZ_VIDEO_RECORDING=${X500_ENABLE_GZ_VIDEO_RECORDING} GZ_VIDEO_RECORD_DIR='${GZ_VIDEO_RECORD_DIR}' GZ_VIDEO_RECORD_FORMAT='${GZ_VIDEO_RECORD_FORMAT}' ./Tools/simulation/gz/launch_obstacle_avoidance_x500.sh"
 
-sleep "${DELAY_BEFORE_AGENT}"
+echo "Waiting for Gazebo to publish topics..."
+wait_for_gz_publishing
 
-echo "Opening Terminal 2: PX4 + Gazebo"
-echo "Gazebo recording: ENABLE_GZ_VIDEO_RECORDING=${ENABLE_GZ_VIDEO_RECORDING}, output dir=${GZ_VIDEO_RECORD_DIR}"
-open_term "PX4 + Gazebo" "echo ROS_DOMAIN_ID=\${ROS_DOMAIN_ID:-0}; cd '${PX4_DIR}' && ./Tools/simulation/gz/launch_obstacle_avoidance_x500.sh"
-
-echo "Waiting ${BRIDGE_STARTUP_BUFFER_SEC}s before launching ROS-GZ bridge..."
-sleep "${BRIDGE_STARTUP_BUFFER_SEC}"
 discover_sensor_bridge_args
 
 echo "ROS-GZ bridge topics:"
@@ -154,11 +236,29 @@ ros2 run ros_gz_bridge parameter_bridge $(printf '%q ' "${BRIDGE_ARGS[@]}")
 EOF
 )
 
-echo "Opening Terminal 3: ROS-GZ bridge"
+echo "Opening Terminal 2: ROS-GZ bridge"
 open_term "ROS-GZ Bridge" "${BRIDGE_CMD}"
 
-sleep "${DELAY_BEFORE_RQT}"
-echo "Opening Terminal 4: rqt_image_view"
-open_term "rqt_image_view" "source /opt/ros/humble/setup.bash && ros2 run rqt_image_view rqt_image_view"
+sleep "${DELAY_BEFORE_AGENT}"
+echo "Opening Terminal 3: MicroXRCEAgent"
+open_term "MicroXRCEAgent" "echo ROS_DOMAIN_ID=\${ROS_DOMAIN_ID:-0}; MicroXRCEAgent udp4 -p 8888"
 
-echo "All terminals launched."
+sleep "${DELAY_BEFORE_RQT}"
+DEPTH_IMAGE_TOPIC="$(get_depth_image_topic)"
+echo "Opening Terminal 4: rqt_image_view (${DEPTH_IMAGE_TOPIC})"
+open_term "rqt_image_view" "source /opt/ros/humble/setup.bash && ros2 run rqt_image_view rqt_image_view ${DEPTH_IMAGE_TOPIC}"
+
+sleep "${DELAY_BEFORE_QGC}"
+QGC_PATH="$(resolve_qgc_appimage || true)"
+if [[ -n "${QGC_PATH}" ]]; then
+  echo "Opening Terminal 5: QGroundControl (${QGC_PATH})"
+  QGC_PATH_Q="$(printf '%q' "${QGC_PATH}")"
+  open_term "QGroundControl" "chmod +x ${QGC_PATH_Q} && ${QGC_PATH_Q}"
+else
+  echo "Warning: QGroundControl AppImage not found. Checked default: ${QGC_APPIMAGE} and ~/Downloads/*.AppImage"
+fi
+
+echo "Starting Gazebo video recording as final step..."
+start_video_recording
+
+echo "All components launched in requested order."
