@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM-based Trajectory Planner using local Qwen or OpenAI cloud API
+LLM-based Trajectory Planner using local Qwen, vLLM/TGIS (OpenAI-compatible), or OpenAI cloud API
 Save as: ros2_ws/src/px4_vision/px4_vision/llm_planner.py
 
 Subscribes to:
@@ -136,7 +136,7 @@ class DepthToObstacles:
 
 class LLMTrajectoryPlanner(Node):
     """
-    Uses either local Qwen (Ollama) or OpenAI cloud API to generate trajectories.
+    Uses local Qwen (Ollama), vLLM/TGIS OpenAI-compatible API, or OpenAI cloud API.
     """
     
     def __init__(self, goal_override=None):
@@ -159,11 +159,16 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('goal_y', 3.0)
         self.declare_parameter('goal_z', 2.5)
         self.declare_parameter('update_rate', 1.0)  # Hz
-        # Supported providers are intentionally kept minimal for clarity.
-        self.declare_parameter('llm_provider', 'qwen')  # qwen or openai
+        # Supported providers: qwen (Ollama), vllm/tgis (OpenAI-compatible server), openai (cloud).
+        self.declare_parameter('llm_provider', 'vllm')  # qwen, vllm/tgis, or openai
         self.declare_parameter('ollama_url', 'http://localhost:11434/api/generate')
         self.declare_parameter('qwen_model', 'qwen2.5:3b')
         self.declare_parameter('openai_model', 'gpt-4o-mini')
+        self.declare_parameter('vllm_url', 'http://localhost:8000/v1/chat/completions')
+        self.declare_parameter('vllm_model', 'Qwen/Qwen2.5-1.5B-Instruct')
+        self.declare_parameter('vllm_api_key', 'token-abc123')
+        self.declare_parameter('vllm_temperature', 0.3)
+        self.declare_parameter('vllm_max_tokens', 300)
         self.declare_parameter('goal_frame', 'ned')  # gazebo(ENU) or ned
         self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
         
@@ -249,6 +254,9 @@ class LLMTrajectoryPlanner(Node):
         if provider == 'openai':
             active_model = str(self.get_parameter('openai_model').value)
             backend_desc = 'OpenAI cloud API'
+        elif provider in ('vllm', 'tgis'):
+            active_model = str(self.get_parameter('vllm_model').value)
+            backend_desc = 'vLLM/TGIS OpenAI-compatible API'
         else:
             active_model = str(self.get_parameter('qwen_model').value)
             backend_desc = 'Local Qwen via Ollama'
@@ -656,6 +664,8 @@ class LLMTrajectoryPlanner(Node):
         provider = str(self.get_parameter('llm_provider').value).strip().lower()
         if provider == 'openai':
             content = self.query_openai_model(user_message)
+        elif provider in ('vllm', 'tgis'):
+            content = self.query_vllm_model(user_message)
         else:
             content = self.query_qwen_model(user_message)
         self.get_logger().info(f'LLM response: {content}')
@@ -791,6 +801,68 @@ class LLMTrajectoryPlanner(Node):
         except urllib.error.URLError as e:
             self.get_logger().error(
                 "Local Qwen request failed "
+                f"(url={url}, model={model_name}): {e}"
+            )
+            raise
+
+    def query_vllm_model(self, user_message):
+        """Query a vLLM/TGIS OpenAI-compatible server via /v1/chat/completions."""
+        url = str(self.get_parameter('vllm_url').value).strip()
+        model_name = str(self.get_parameter('vllm_model').value).strip()
+        api_key = os.getenv('VLLM_API_KEY', str(self.get_parameter('vllm_api_key').value).strip())
+        temperature = float(self.get_parameter('vllm_temperature').value)
+        max_tokens = int(self.get_parameter('vllm_max_tokens').value)
+
+        if not api_key:
+            raise RuntimeError('vLLM API key is empty. Set VLLM_API_KEY or parameter vllm_api_key')
+
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+
+        request = urllib.request.Request(
+            url=url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = response.read().decode("utf-8")
+            parsed = json.loads(body)
+            choices = parsed.get("choices", [])
+            if not choices:
+                raise RuntimeError("No choices returned by vLLM/TGIS server")
+            message = choices[0].get("message", {})
+            content = message.get("content", "")
+            if not content:
+                raise RuntimeError("Empty content returned by vLLM/TGIS server")
+            return content
+        except urllib.error.HTTPError as e:
+            error_body = ""
+            try:
+                error_body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                error_body = "<no response body>"
+            self.get_logger().error(
+                "vLLM/TGIS request failed "
+                f"(status={e.code}, url={url}, model={model_name}): {error_body}"
+            )
+            raise
+        except urllib.error.URLError as e:
+            self.get_logger().error(
+                "vLLM/TGIS request failed "
                 f"(url={url}, model={model_name}): {e}"
             )
             raise
