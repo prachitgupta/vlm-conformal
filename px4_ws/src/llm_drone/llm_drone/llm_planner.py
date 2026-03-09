@@ -33,8 +33,22 @@ except ImportError:
 import os
 import urllib.request
 import urllib.error
-from ament_index_python.packages import get_package_share_directory
 from llm_drone.cli_goal import parse_goal_overrides
+from llm_drone.llm_prompt_common import (
+    DEPTH_HFOV_DEG,
+    DEPTH_VFOV_DEG,
+    DEPTH_MIN_M,
+    DEPTH_MAX_M,
+    OBS_FIFO_LEN,
+    MPC_DEPTH_SAMPLE_COUNT,
+    LLM_PLANNER_PROMPT_FILENAME,
+    DEFAULT_SYSTEM_PROMPT,
+    build_environment_vector,
+    compose_final_prompt,
+    load_system_prompt,
+    resolve_prompt_file,
+    translate_vector_to_nlp,
+)
 
 try:
     from px4_msgs.msg import TrajectorySetpoint, OffboardControlMode, VehicleOdometry
@@ -43,14 +57,7 @@ except ImportError:
     HAS_PX4_MSGS = False
 
 
-# Match MPC local planner depth camera assumptions so obstacle signals are aligned.
-DEPTH_HFOV_DEG = 72.995
-DEPTH_VFOV_DEG = 58.053
-DEPTH_MIN_M = 0.2
-DEPTH_MAX_M = 19.1
-OBS_FIFO_LEN = 200
-MPC_DEPTH_SAMPLE_COUNT = 500
-LLM_WAYPOINT_COUNT = 5
+LLM_WAYPOINT_COUNT = 2
 
 
 class LocalObstacleMap:
@@ -147,12 +154,9 @@ class LLMTrajectoryPlanner(Node):
         
         # Load prompt from file
         prompt_file = self._resolve_prompt_file()
-        try:
-            with open(prompt_file, 'r') as f:
-                self.system_prompt = f.read()
-        except FileNotFoundError:
+        self.system_prompt = load_system_prompt(LLM_PLANNER_PROMPT_FILENAME)
+        if not prompt_file.exists():
             self.get_logger().warn(f'Prompt file not found: {prompt_file}')
-            self.system_prompt = self._get_default_prompt()
         
         # Parameters
         self.declare_parameter('goal_x', 35.0)
@@ -275,18 +279,11 @@ class LLMTrajectoryPlanner(Node):
     
     def _get_default_prompt(self):
         """Fallback prompt if file not found"""
-        return """You are a drone motion planning system. Generate safe trajectories."""
+        return DEFAULT_SYSTEM_PROMPT
 
     def _resolve_prompt_file(self):
         """Resolve prompt path for both source and installed package layouts."""
-        local_path = os.path.join(os.path.dirname(__file__), '../config/llm_prompt.txt')
-        local_path = os.path.abspath(local_path)
-        if os.path.exists(local_path):
-            return local_path
-
-        share_dir = get_package_share_directory('llm_drone')
-        share_path = os.path.join(share_dir, 'config', 'llm_prompt.txt')
-        return share_path
+        return resolve_prompt_file(LLM_PLANNER_PROMPT_FILENAME)
     
     def _load_openai_key(self):
         api_key = os.getenv('OPENAI_API_KEY')
@@ -439,151 +436,19 @@ class LLMTrajectoryPlanner(Node):
         """
         Build numerical vector v from odometry + depth for motion planning.
         """
-        if self.depth_image is None:
-            return None
-
-        depth = self.depth_image
-        valid_depth = depth[np.isfinite(depth)]
-        valid_depth = valid_depth[(valid_depth > 0.2) & (valid_depth < 20.0)]
-
-        depth_valid_fraction = float(valid_depth.size / depth.size) if depth.size > 0 else 0.0
-        global_min = float(np.min(valid_depth)) if valid_depth.size > 0 else 20.0
-        global_mean = float(np.mean(valid_depth)) if valid_depth.size > 0 else 20.0
-
-        h, w = depth.shape
-        sector_bounds = {
-            "far_left": (0, int(0.2 * w)),
-            "left": (int(0.2 * w), int(0.4 * w)),
-            "center": (int(0.4 * w), int(0.6 * w)),
-            "right": (int(0.6 * w), int(0.8 * w)),
-            "far_right": (int(0.8 * w), w),
-        }
-
-        sector_min = {}
-        sector_mean = {}
-        for name, (start, end) in sector_bounds.items():
-            patch = depth[:, start:end]
-            patch_valid = patch[np.isfinite(patch)]
-            patch_valid = patch_valid[(patch_valid > 0.2) & (patch_valid < 20.0)]
-            sector_min[name] = float(np.min(patch_valid)) if patch_valid.size > 0 else 20.0
-            sector_mean[name] = float(np.mean(patch_valid)) if patch_valid.size > 0 else 20.0
-
-        nearest_sector = min(sector_min, key=sector_min.get)
-        nearest_distance = float(sector_min[nearest_sector])
-        if nearest_distance < 1.5:
-            clearance_status = "blocked"
-        elif nearest_distance < 3.0:
-            clearance_status = "caution"
-        else:
-            clearance_status = "clear"
-
-        goal_delta = self.goal - self.current_position
-        dist_to_goal = float(np.linalg.norm(goal_delta))
-        speed = float(np.linalg.norm(self.current_velocity))
-        heading_to_goal_xy = float(np.arctan2(goal_delta[1], goal_delta[0]))
-
-        # MPC-consistent obstacle signal: nearest point from FIFO local obstacle map (Eq.11).
-        x_min = self.local_obstacle_map.nearest(self.current_position)
-        if x_min is not None:
-            x_min = np.asarray(x_min, dtype=float)
-            x_min_rel = x_min - self.current_position
-            nearest_dist_ned = float(np.linalg.norm(x_min_rel))
-            nearest_point_ned = [float(x) for x in x_min]
-            nearest_vec_ned = [float(x) for x in x_min_rel]
-        else:
-            nearest_dist_ned = 20.0
-            nearest_point_ned = [float(self.current_position[0]), float(self.current_position[1]), float(self.current_position[2])]
-            nearest_vec_ned = [20.0, 0.0, 0.0]
-
-        latest_obs = np.asarray(self.latest_depth_obstacles_ned, dtype=float)
-        latest_obs_count = int(latest_obs.shape[0]) if latest_obs.ndim == 2 else 0
-        local_obs_snapshot = self.local_obstacle_map.snapshot()
-        local_obs_count = int(local_obs_snapshot.shape[0]) if local_obs_snapshot.ndim == 2 else 0
-
-        vector = {
-            "current_position_ned_m": [float(x) for x in self.current_position],
-            "current_velocity_mps": [float(v) for v in self.current_velocity],
-            "goal_position_ned_m": [float(g) for g in self.goal],
-            "goal_delta_m": [float(d) for d in goal_delta],
-            "distance_to_goal_m": dist_to_goal,
-            "speed_mps": speed,
-            "heading_to_goal_xy_rad": heading_to_goal_xy,
-            "obstacle_features_ned": {
-                "pipeline": "mpc_consistent_depth_to_body_to_ned_fifo_local_map",
-                "depth_camera_params": {
-                    "hfov_deg": DEPTH_HFOV_DEG,
-                    "vfov_deg": DEPTH_VFOV_DEG,
-                    "depth_min_m": DEPTH_MIN_M,
-                    "depth_max_m": DEPTH_MAX_M,
-                    "sample_count_per_frame_target": int(self.depth_to_obstacles.n_sample),
-                },
-                "latest_depth_frame_obstacle_points_ned_count": latest_obs_count,
-                "local_obstacle_fifo_count": local_obs_count,
-                "nearest_obstacle_distance_ned_m": nearest_dist_ned,
-                "nearest_obstacle_position_ned_m": nearest_point_ned,
-                "nearest_obstacle_relative_ned_m": nearest_vec_ned,
-                "mpc_nearest_obstacle_eq11_x_min_ned_m": nearest_point_ned,
-            },
-            "depth_features": {
-                "valid_fraction": depth_valid_fraction,
-                "global_min_m": global_min,
-                "global_mean_m": global_mean,
-                "sector_min_m": sector_min,
-                "sector_mean_m": sector_mean,
-                "nearest_obstacle_sector": nearest_sector,
-                "nearest_obstacle_distance_m": nearest_distance,
-                "clearance_status": clearance_status,
-            },
-        }
+        vector = build_environment_vector(
+            position_ned=self.current_position,
+            velocity_ned=self.current_velocity,
+            goal_ned=self.goal,
+            depth_image=self.depth_image,
+            latest_depth_obstacles_ned=self.latest_depth_obstacles_ned,
+            local_obstacle_snapshot=self.local_obstacle_map.snapshot(),
+            depth_sample_count=int(self.depth_to_obstacles.n_sample),
+            waypoint_count=LLM_WAYPOINT_COUNT,
+        )
         self.last_environment_vector = vector
         return vector
 
-    def translate_vector_to_nlp(self, vector):
-        """
-        Fixed translator T: v -> NLP(v).
-        Converts numerical environment vector into deterministic natural language.
-        """
-        if vector is None:
-            return "Environment summary unavailable: no depth data."
-
-        p = vector["current_position_ned_m"]
-        vel = vector["current_velocity_mps"]
-        g = vector["goal_position_ned_m"]
-        d = vector["goal_delta_m"]
-        obs_ned = vector["obstacle_features_ned"]
-        depth = vector["depth_features"]
-        mins = depth["sector_min_m"]
-
-        lateral_hint = "prefer center progress"
-        side_clear = mins["right"] + mins["far_right"]
-        side_left = mins["left"] + mins["far_left"]
-        if side_clear > side_left + 0.8:
-            lateral_hint = "right side is clearer"
-        elif side_left > side_clear + 0.8:
-            lateral_hint = "left side is clearer"
-
-        return (
-            "Environment section (T(v)):\n"
-            f"- Current position NED is ({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f}) m.\n"
-            f"- Current velocity is ({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f}) m/s (speed {vector['speed_mps']:.2f} m/s).\n"
-            f"- Goal position NED is ({g[0]:.2f}, {g[1]:.2f}, {g[2]:.2f}) m.\n"
-            f"- Goal delta from current state is ({d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}) m with distance {vector['distance_to_goal_m']:.2f} m.\n"
-            f"- MPC-consistent obstacle pipeline: {obs_ned['pipeline']}.\n"
-            f"- Current depth frame obstacle points (NED): {obs_ned['latest_depth_frame_obstacle_points_ned_count']}; "
-            f"FIFO local obstacle map size: {obs_ned['local_obstacle_fifo_count']} points. "
-            f"Nearest obstacle in NED is at ({obs_ned['nearest_obstacle_position_ned_m'][0]:.2f}, "
-            f"{obs_ned['nearest_obstacle_position_ned_m'][1]:.2f}, {obs_ned['nearest_obstacle_position_ned_m'][2]:.2f}) m, "
-            f"relative vector ({obs_ned['nearest_obstacle_relative_ned_m'][0]:.2f}, "
-            f"{obs_ned['nearest_obstacle_relative_ned_m'][1]:.2f}, {obs_ned['nearest_obstacle_relative_ned_m'][2]:.2f}) m, "
-            f"distance {obs_ned['nearest_obstacle_distance_ned_m']:.2f} m.\n"
-            f"- Depth validity fraction is {depth['valid_fraction']:.2f}. Global nearest obstacle distance is {depth['global_min_m']:.2f} m.\n"
-            f"- Sector minimum distances [far_left, left, center, right, far_right] are "
-            f"[{mins['far_left']:.2f}, {mins['left']:.2f}, {mins['center']:.2f}, {mins['right']:.2f}, {mins['far_right']:.2f}] m.\n"
-            f"- Nearest obstacle sector is {depth['nearest_obstacle_sector']} at {depth['nearest_obstacle_distance_m']:.2f} m "
-            f"and clearance status is {depth['clearance_status']}.\n"
-            f"- Lateral planning hint: {lateral_hint}."
-        )
-    
     def plan_trajectory(self):
         """Query LLM for next trajectory point"""
         
@@ -607,7 +472,7 @@ class LLMTrajectoryPlanner(Node):
                 # Store trajectory
                 self.llm_trajectory.append(next_position)
 
-                # Publish timestamped single-point + 5-waypoint sequence using same tick time.
+                # Publish timestamped single-point + short waypoint sequence using same tick time.
                 now_ros = self.get_clock().now()
                 stamp_msg = now_ros.to_msg()
                 traj_msg = PoseStamped()
@@ -653,13 +518,13 @@ class LLMTrajectoryPlanner(Node):
         return self.client
 
     def query_llm(self):
-        """Query the configured LLM backend and enforce an exact 5-waypoint output."""
+        """Query the configured LLM backend and enforce the configured waypoint schema."""
         
         env_vector = self.build_environment_vector()
-        env_text = self.translate_vector_to_nlp(env_vector)
+        env_text = translate_vector_to_nlp(env_vector)
 
         # Compose final prompt = fixed prompt + translated environment block + vector
-        user_message = self.compose_final_prompt(env_vector, env_text)
+        user_message = compose_final_prompt(env_vector, env_text)
 
         provider = str(self.get_parameter('llm_provider').value).strip().lower()
         if provider == 'openai':
@@ -690,7 +555,9 @@ class LLMTrajectoryPlanner(Node):
                 if selected_idx < 0 or selected_idx >= len(waypoints):
                     raise ValueError("selected_waypoint_index out of range")
                 if selected_idx != 0:
-                    raise ValueError("selected_waypoint_index must be 0 for 5-waypoint rollout execution")
+                    raise ValueError(
+                        f"selected_waypoint_index must be 0 for {LLM_WAYPOINT_COUNT}-waypoint rollout execution"
+                    )
 
                 llm_waypoints = []
                 for i, pt in enumerate(waypoints):
@@ -701,6 +568,10 @@ class LLMTrajectoryPlanner(Node):
                     ], dtype=float)
                     if not np.all(np.isfinite(wp_xyz)):
                         raise ValueError(f"waypoint {i} contains non-finite values")
+                    if not np.isclose(wp_xyz[2], float(self.goal[2]), atol=1e-3):
+                        raise ValueError(
+                            f"waypoint {i} z={wp_xyz[2]:.3f} does not match required goal z={float(self.goal[2]):.3f}"
+                        )
                     llm_waypoints.append(wp_xyz)
 
                 next_position = llm_waypoints[selected_idx]
@@ -715,7 +586,7 @@ class LLMTrajectoryPlanner(Node):
             return None, None
 
     def publish_llm_trajectory_sequence(self, waypoints_ned, stamp_msg):
-        """Publish the full 5-waypoint LLM rollout used for comparison/dataset debugging."""
+        """Publish the full LLM waypoint rollout used for comparison and debugging."""
         if waypoints_ned is None:
             return
         path = Path()
@@ -867,26 +738,6 @@ class LLMTrajectoryPlanner(Node):
             )
             raise
 
-    def compose_final_prompt(self, env_vector, env_text):
-        """Build final prompt from fixed instructions + dynamic environment section."""
-        return f"""
-Use the fixed planning policy exactly as defined in the system prompt.
-
-Dynamic Environment Section (T(v)):
-{env_text}
-
-Numerical Environment Vector v:
-{json.dumps(env_vector, indent=2)}
-
-Sensor attachments:
-1) Depth map visualization (red/yellow close, blue far)
-
-Return only one JSON object with keys:
-- waypoints
-- selected_waypoint_index
-- reasoning
-"""
-    
     def compute_velocity_command(self, target_position):
         """Convert target position to velocity command"""
         direction = target_position - self.current_position

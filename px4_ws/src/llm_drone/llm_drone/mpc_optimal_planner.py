@@ -10,9 +10,10 @@ System:
 
 MPC Formulation (discrete-time, horizon T steps)
 -------------------------------------------------
-State       : x(k) = [x, y, z, vx, vy, vz]^T  (NED, metres / m·s⁻¹)
-Control     : u(k) = [vx_ref, vy_ref, vz_ref]^T (reference velocities)
-Dynamics    : x(k+1) = x(k) + Ts * u(k)
+Solver state  : [x, y, vx, vy] in the horizontal plane (NED)
+Solver control: [ax, ay] planar accelerations
+PX4 output    : [vx_ref, vy_ref, vz_ref] velocity setpoint in NED
+Dynamics      : x(k+1) = x(k) + Ts * v(k),  v(k+1) = v(k) + Ts * a(k)
 
 Optimisation:
   MATLAB-style sequential convex programming (SCP):
@@ -26,6 +27,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
+from concurrent.futures import Future, ThreadPoolExecutor
+import time
 import numpy as np
 from numpy.linalg import norm
 import cv2
@@ -36,6 +39,12 @@ try:
     import cvxpy as cp
 except Exception:
     cp = None
+from llm_drone.native_mpc_backend import (
+    native_backend_available,
+    native_osqp_available,
+    solve_osqp as solve_native_osqp,
+    solve_subgradient as solve_native_subgradient,
+)
 
 # ROS2 message types
 from sensor_msgs.msg import Image
@@ -46,24 +55,25 @@ from px4_msgs.msg import TrajectorySetpoint, VehicleOdometry, OffboardControlMod
 # ─────────────────────────────────────────────────────────────────────────────
 # MPC PARAMETERS  (tune these)
 # ─────────────────────────────────────────────────────────────────────────────
-Ts          = 0.1     # sampling time [s]
-T_horizon   = 100          # MPC prediction horizon [steps]
-V_MAX       = 3.0          # per-axis max commanded velocity [m/s]
-N_OBS       = 1            # nearest-point method: N=1 (Section III-A)
-Q_diag      = np.array([2.0, 2.0, 2.0, 0.1, 0.1, 0.1])   # tracking weight Q
-SCP_MAX_OUTER_ITERS = 12   # sequential convexification iterations per MPC cycle
-SCP_INNER_ITERS = 14       # projected-gradient iterations per convex sub-problem
+Ts          = 0.1         # sampling time [s]
+T_horizon   = 50         # MPC prediction horizon [steps]
+V_MAX       = 2.0         # per-axis max commanded velocity [m/s]
+A_MAX       = 1.5         # per-axis max commanded acceleration [m/s^2]
+N_OBS       = 2            # nearest-point method: N=1 (Section III-A)
+Q_diag      = np.array([20.0, 20.0, 20.0, 1, 1, 1])   # tracking weight Q
+SCP_MAX_OUTER_ITERS = 4    # sequential convexification iterations per MPC cycle
+SCP_INNER_ITERS = 6        # projected-gradient iterations per convex sub-problem
 SCP_EPS      = 1e-3        # stop when trajectory update is small
 SCP_LR       = 0.003       # projected-gradient base step size (stability-critical)
 SCP_LR_BACKTRACK = 0.5     # multiplicative backtracking factor for failed inner steps
 SCP_LS_MAX_STEPS = 6       # max line-search reductions per inner iteration
-SCP_LAMBDA   = 1000.0       # penalty multiplier (constraints), per MATLAB-style phi/phi_hat
+SCP_LAMBDA   = 100.0       # penalty multiplier (constraints), per MATLAB-style phi/phi_hat
 SCP_ALPHA    = 0.1         # trust-region acceptance parameter
 SCP_BETA_GROW = 1.1        # trust-region growth factor after accepted step
 SCP_BETA_SHRINK = 0.5      # trust-region shrink factor after rejected step
 TRUST_POS0   = 1.0         # initial trust region on position trajectory [m]
 TRUST_U0     = 1.0         # initial tust region on velocity command [m/s]
-MIN_CLEARANCE = 1.5        # desired clearance [m] from nearest obstacle point
+MIN_CLEARANCE = 2      # desired clearance [m] from nearest obstacle point
 # OakD-Lite StereoOV7251 depth sensor from PX4 Gazebo SDF:
 #   x500_depth mount + OakD-Lite/model.sdf (horizontal_fov=1.274 rad, 640x480,
 #   near=0.2 m, far=19.1 m). Vertical FOV is derived from aspect ratio.
@@ -75,20 +85,34 @@ BOX_THRESH  = 0.05         # bounding-box volume threshold [m³] to filter micro
 FIFO_LEN    = 200          # local obstacle map FIFO size (Section III-B)
 SETPOINT_LOG_EVERY_N = 10  # print MPC/PX4 setpoint debug every N control ticks
 DEBUG_PLOT_ENABLED = True  # non-blocking 2D MPC debug plots (optional)
+DEBUG_ENABLE_DEPTH_CAMERA = True  # non-blocking 2D MPC debug plots (optional)
 DEBUG_PLOT_RATE_HZ = 4.0   # plot refresh rate, decoupled from MPC loop
 DEBUG_PLOT_OBS_MAX = 200   # max local obstacle points shown in debug plot
 DEBUG_PATH_HISTORY_LEN = 300
 MPC_LABEL_WAYPOINT_COUNT = 5  # publish next 5 waypoints from final solved X_opt for dataset labels
-USE_VELOCITY_ONLY_SETPOINT = False # publsish U_opt as primary NED velocity command
+USE_VELOCITY_ONLY_SETPOINT = True  # publish velocity setpoints as primary NED command
+FRESH_COMMITTED_WAYPOINT_TOPIC = '/mpc/committed_waypoint_fresh'
+HOLD_WAYPOINT_TOPIC = '/mpc/committed_waypoint_hold'
+PUBLISH_PERIOD_SEC = 0.05
+OFFBOARD_HEARTBEAT_PERIOD_SEC = 0.05
+SOLVE_WARN_SEC = 0.10
+RATE_WINDOW_LEN = 40
 GOAL_REACHED_THRESHOLD_M = 0.5
 GOAL_REACHED_YAW_THRESHOLD_RAD = 0.15
 ENABLE_DELAY_COMPENSATION = False  # global default: compensate PX4 tracking lag in MPC initial state
 DELAY_COMPENSATION_SEC = 0.15      # forward-prediction horizon for delay compensation [s]
+DEFAULT_MPC_SOLVER_BACKEND = 'python'
+DEFAULT_ENABLE_DEPTH_CAMERA = True
+DEFAULT_OBSTACLE_CONSTRAINTS_DISABLED = False
+DEFAULT_HOLD_DURING_SOLVE = False
 # Target heading: Gazebo +X (ENU East). Converted to NED yaw reference:
 # yaw_ned = pi/2 - yaw_enu, with yaw_enu(+X)=0 => yaw_ned=+pi/2.
 YAW_TARGET_RAD = np.pi / 2.0       # terminal yaw target in NED [rad]
-YAW_RATE_MAX = 1.5                 # max yaw-rate command [rad/s]
-U_LIMS = np.array([V_MAX, V_MAX, V_MAX, YAW_RATE_MAX], dtype=float)
+Z_HOLD_THRESHOLD_M = 0.25          # if |z_goal - z| <= threshold, command vz=0
+Z_HOLD_KP = 1.5                    # proportional gain for z hold velocity command
+VZ_HOLD_MAX = V_MAX                # clamp z-hold velocity command [m/s]
+U_LIMS = np.array([A_MAX, A_MAX], dtype=float)
+VEL_LIMS = np.array([V_MAX, V_MAX], dtype=float)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -372,24 +396,71 @@ class MPCPlanner:
       - linearized obstacle constraints around previous trajectory,
       - trust-region accept/reject update using delta and delta_hat.
     """
-    def __init__(self):
+    def __init__(self, backend: str = DEFAULT_MPC_SOLVER_BACKEND):
+        requested_backend = str(backend).strip().lower()
+        if requested_backend == 'auto':
+            if native_osqp_available():
+                resolved_backend = 'cpp_osqp'
+            elif native_backend_available():
+                resolved_backend = 'cpp_subgradient'
+            else:
+                resolved_backend = 'python'
+        elif requested_backend == 'cpp_osqp':
+            if not native_osqp_available():
+                raise RuntimeError(
+                    'mpc_solver_backend=cpp_osqp requested, but llm_drone._mpc_native.solve_osqp is not available'
+                )
+            resolved_backend = 'cpp_osqp'
+        elif requested_backend == 'cpp_subgradient':
+            if not native_backend_available():
+                raise RuntimeError(
+                    'mpc_solver_backend=cpp_subgradient requested, but llm_drone._mpc_native is not available'
+                )
+            resolved_backend = 'cpp_subgradient'
+        elif requested_backend == 'python':
+            resolved_backend = 'python'
+        else:
+            raise ValueError(
+                f'Unsupported mpc_solver_backend={backend!r}; expected one of '
+                "'python', 'cpp_osqp', 'cpp_subgradient', or 'auto'"
+            )
+
+        self.backend_name = resolved_backend
         self.last_solver_status = 'not_run'
 
     @staticmethod
+    def _native_solver_config() -> dict:
+        return {
+            'Ts': Ts,
+            'T_horizon': T_horizon,
+            'V_MAX': V_MAX,
+            'A_MAX': A_MAX,
+            'SCP_MAX_OUTER_ITERS': SCP_MAX_OUTER_ITERS,
+            'SCP_INNER_ITERS': SCP_INNER_ITERS,
+            'SCP_EPS': SCP_EPS,
+            'SCP_LR': SCP_LR,
+            'SCP_LAMBDA': SCP_LAMBDA,
+            'SCP_ALPHA': SCP_ALPHA,
+            'SCP_BETA_GROW': SCP_BETA_GROW,
+            'SCP_BETA_SHRINK': SCP_BETA_SHRINK,
+            'TRUST_POS0': TRUST_POS0,
+            'TRUST_U0': TRUST_U0,
+            'MIN_CLEARANCE': MIN_CLEARANCE,
+        }
+
+    @staticmethod
     def _rollout(x0: np.ndarray, U: np.ndarray) -> np.ndarray:
-        """Rollout with controls [vx, vy, vz, yaw_rate]."""
-        X = np.zeros((T_horizon + 1, 8), dtype=float)
+        """Rollout with controls [ax, ay] for 2D state [x, y, vx, vy]."""
+        X = np.zeros((T_horizon + 1, 4), dtype=float)
         X[0] = x0
         for k in range(T_horizon):
-            X[k + 1, :3] = X[k, :3] + Ts * U[k, :3]
-            X[k + 1, 3:6] = U[k, :3]
-            X[k + 1, 6] = X[k, 6] + Ts * U[k, 3]
-            X[k + 1, 7] = U[k, 3]
+            X[k + 1, :2] = X[k, :2] + Ts * X[k, 2:4]
+            X[k + 1, 2:4] = X[k, 2:4] + Ts * U[k, :2]
         return X
 
     @staticmethod
     def _project_speed_limits(U: np.ndarray) -> None:
-        """Component-wise saturation for [vx, vy, vz, yaw_rate]."""
+        """Component-wise saturation for [ax, ay]."""
         np.clip(U, -U_LIMS[None, :], U_LIMS[None, :], out=U)
 
     @staticmethod
@@ -409,23 +480,20 @@ class MPCPlanner:
     ) -> float:
         """MATLAB-like phi(X,U): objective + lambda*(eq violations + ineq violations)."""
         eqns = 0.0
-        eqns += self._sum_abs(X[0, :3] - X[0, :3])   # fixed by construction
-        eqns += self._sum_abs(X[0, 3:6] - X[0, 3:6]) # fixed by construction
-        eqns += self._sum_abs(X[0, 6:] - X[0, 6:])   # fixed by construction
-        eqns += self._sum_abs(X[-1, :3] - x_ref[:3])
-        eqns += self._sum_abs(X[-1, 3:6] - x_ref[3:6])
-        eqns += self._sum_abs(X[-1, 6:] - x_ref[6:])
+        eqns += self._sum_abs(X[-1, :2] - x_ref[:2])
+        eqns += self._sum_abs(X[-1, 2:4] - x_ref[2:4])
 
         ineq_u = np.sum(self._hinge(np.abs(U) - U_LIMS[None, :]))
+        ineq_v = np.sum(self._hinge(np.abs(X[1:, 2:4]) - VEL_LIMS[None, :]))
 
         ineq_obs = 0.0
         if x_obs is not None:
-            d = X[1:, :3] - x_obs[None, :]
+            d = X[1:, :2] - x_obs[None, :]
             dist = np.linalg.norm(d, axis=1)
             ineq_obs = float(np.sum(self._hinge(MIN_CLEARANCE - dist)))
 
         obj = float(Ts * np.sum(U * U))
-        return obj + SCP_LAMBDA * (eqns + float(ineq_u) + ineq_obs)
+        return obj + SCP_LAMBDA * (eqns + float(ineq_u) + float(ineq_v) + ineq_obs)
 
     def _phi_hat(
         self,
@@ -440,24 +508,24 @@ class MPCPlanner:
     ) -> float:
         """MATLAB-like convexified phi_hat(X,U) around (X_now,U_now)."""
         eqns = 0.0
-        eqns += self._sum_abs(X[-1, :3] - x_ref[:3])
-        eqns += self._sum_abs(X[-1, 3:6] - x_ref[3:6])
-        eqns += self._sum_abs(X[-1, 6:] - x_ref[6:])
+        eqns += self._sum_abs(X[-1, :2] - x_ref[:2])
+        eqns += self._sum_abs(X[-1, 2:4] - x_ref[2:4])
 
         ineq_u = np.sum(self._hinge(np.abs(U) - U_LIMS[None, :]))
+        ineq_v = np.sum(self._hinge(np.abs(X[1:, 2:4]) - VEL_LIMS[None, :]))
         ineq_tr_u = np.sum(self._hinge(np.abs(U - U_now) - l_u))
-        ineq_tr_x = np.sum(self._hinge(np.abs(X[1:, :3] - X_now[1:, :3]) - l_pos))
+        ineq_tr_x = np.sum(self._hinge(np.abs(X[1:, :2] - X_now[1:, :2]) - l_pos))
 
         ineq_obs = 0.0
         if x_obs is not None:
-            d_now = X_now[1:, :3] - x_obs[None, :]
+            d_now = X_now[1:, :2] - x_obs[None, :]
             d_now_norm = np.linalg.norm(d_now, axis=1)
-            d = X[1:, :3] - x_obs[None, :]
+            d = X[1:, :2] - x_obs[None, :]
             lin_obs = MIN_CLEARANCE * d_now_norm - np.sum(d_now * d, axis=1)
             ineq_obs = float(np.sum(self._hinge(lin_obs)))
 
         obj = float(Ts * np.sum(U * U))
-        ineq = float(ineq_u + ineq_tr_u + ineq_tr_x) + ineq_obs
+        ineq = float(ineq_u + ineq_v + ineq_tr_u + ineq_tr_x) + ineq_obs
         return obj + SCP_LAMBDA * (eqns + ineq)
 
     def _phi_hat_gradient(
@@ -478,50 +546,65 @@ class MPCPlanner:
         X = self._rollout(x0, U)
         grad = 2.0 * Ts * U
 
-        # terminal position and yaw L1 penalties
-        sign_pos = np.sign(X[-1, :3] - x_ref[:3])
-        sign_yaw = float(np.sign(X[-1, 6] - x_ref[6]))
-        for j in range(T_horizon):
-            grad[j, :3] += SCP_LAMBDA * Ts * sign_pos
-            grad[j, 3] += SCP_LAMBDA * Ts * sign_yaw
+        # terminal position L1 penalties via x(T) sensitivity wrt accelerations
+        sign_pos = np.sign(X[-1, :2] - x_ref[:2])
+        for j in range(T_horizon - 1):
+            weight = Ts * Ts * float(T_horizon - 1 - j)
+            grad[j, :2] += SCP_LAMBDA * weight * sign_pos
 
-        # terminal velocity and yaw-rate L1 penalties
-        grad[-1, :3] += SCP_LAMBDA * np.sign(U[-1, :3] - x_ref[3:6])
-        grad[-1, 3] += SCP_LAMBDA * np.sign(U[-1, 3] - x_ref[7])
+        # terminal velocity L1 penalties via v(T) sensitivity wrt accelerations
+        sign_vel = np.sign(X[-1, 2:4] - x_ref[2:4])
+        grad += SCP_LAMBDA * Ts * sign_vel[None, :]
 
         # control bounds |u| <= U_LIMS
         viol_u = np.abs(U) - U_LIMS[None, :]
         mask_u = viol_u > 0.0
         grad += SCP_LAMBDA * (mask_u * np.sign(U))
 
+        # velocity bounds |v| <= VEL_LIMS
+        for k in range(1, T_horizon + 1):
+            v_k = X[k, 2:4]
+            viol_v = np.abs(v_k) - VEL_LIMS
+            mask_v = viol_v > 0.0
+            if not np.any(mask_v):
+                continue
+            g_v = np.zeros(2, dtype=float)
+            g_v[mask_v] = np.sign(v_k[mask_v])
+            # v_k depends on accelerations a_0..a_{k-1}
+            for j in range(k):
+                grad[j, :2] += SCP_LAMBDA * Ts * g_v
+
         # control trust region |u-u_now| <= l_u
         viol_tr_u = np.abs(U - U_now) - l_u
         mask_tr_u = viol_tr_u > 0.0
         grad += SCP_LAMBDA * (mask_tr_u * np.sign(U - U_now))
 
-        # state trust region |x - x_now| <= l_pos
+        # state trust region |xy - xy_now| <= l_pos
         for k in range(1, T_horizon + 1):
-            dx = X[k, :3] - X_now[k, :3]
+            dx = X[k, :2] - X_now[k, :2]
             mask = np.abs(dx) - l_pos > 0.0
             if not np.any(mask):
                 continue
-            g_x = np.zeros(3, dtype=float)
+            g_x = np.zeros(2, dtype=float)
             g_x[mask] = np.sign(dx[mask])
-            for j in range(k):
-                grad[j, :3] += SCP_LAMBDA * Ts * g_x
+            for j in range(k - 1):
+                weight = Ts * Ts * float(k - 1 - j)
+                grad[j, :2] += SCP_LAMBDA * weight * g_x
 
         # convexified obstacle constraint
         if x_obs is not None:
-            d_now = X_now[1:, :3] - x_obs[None, :]
+            d_now = X_now[1:, :2] - x_obs[None, :]
             d_now_norm = np.linalg.norm(d_now, axis=1)
-            d = X[1:, :3] - x_obs[None, :]
+            d = X[1:, :2] - x_obs[None, :]
             lin_obs = MIN_CLEARANCE * d_now_norm - np.sum(d_now * d, axis=1)
             for k in range(T_horizon):
                 if lin_obs[k] <= 0.0:
                     continue
                 g_x = -d_now[k]
-                for j in range(k + 1):
-                    grad[j, :3] += SCP_LAMBDA * Ts * g_x
+                # x_{k+1} depends on accelerations a_0..a_{k-1}
+                for j in range(k):
+                    weight = Ts * Ts * float(k - j)
+                    grad[j, :2] += SCP_LAMBDA * weight * g_x
 
         return grad, X
 
@@ -535,16 +618,38 @@ class MPCPlanner:
 
         Parameters
         ----------
-        x0      : (8,) current vehicle state [NED + yaw]
-        x_ref   : (8,) desired goal state   [NED + yaw]
-        x_min   : (3,) nearest obstacle position, or None
-        U_warm  : (T, 4) warm-start control sequence
+        x0      : (4,) current planning state [x, y, vx, vy]
+        x_ref   : (4,) desired terminal state [x, y, vx, vy]
+        x_min   : (2,) nearest obstacle position in XY, or None
+        U_warm  : (T, 2) warm-start control sequence [ax, ay]
 
         Returns
         -------
-        U_opt   : (T, 4) optimised control sequence
-        X_opt   : (T+1, 8) optimised state trajectory
+        U_opt   : (T, 2) optimised control sequence [ax, ay]
+        X_opt   : (T+1, 4) optimised state trajectory
         """
+        if self.backend_name == 'cpp_osqp':
+            U_opt, X_opt, solver_status = solve_native_osqp(
+                x0=x0,
+                x_ref=x_ref,
+                x_obs=x_min,
+                u_warm=U_warm,
+                config=self._native_solver_config(),
+            )
+            self.last_solver_status = solver_status
+            return U_opt, X_opt
+
+        if self.backend_name == 'cpp_subgradient':
+            U_opt, X_opt, solver_status = solve_native_subgradient(
+                x0=x0,
+                x_ref=x_ref,
+                x_obs=x_min,
+                u_warm=U_warm,
+                config=self._native_solver_config(),
+            )
+            self.last_solver_status = solver_status
+            return U_opt, X_opt
+
         U_now = U_warm.copy()
         self._project_speed_limits(U_now)
         X_now = self._rollout(x0, U_now)
@@ -634,36 +739,43 @@ class MPCPlanner:
             self.last_solver_status = 'no_cvxpy'
             return None
 
-        U = cp.Variable((T_horizon, 4))
-        # Affine rollout in CVX variables: X_pos[k] corresponds to X[k+1, :3].
-        X_pos = x0[:3] + Ts * cp.cumsum(U[:, :3], axis=0)
-        X_yaw = x0[6] + Ts * cp.cumsum(U[:, 3], axis=0)
+        U = cp.Variable((T_horizon, 2))
+        X_pos = cp.Variable((T_horizon + 1, 2))
+        X_vel = cp.Variable((T_horizon + 1, 2))
+        constraints = [
+            X_pos[0, :] == x0[:2],
+            X_vel[0, :] == x0[2:4],
+        ]
+        for k in range(T_horizon):
+            constraints += [
+                X_pos[k + 1, :] == X_pos[k, :] + Ts * X_vel[k, :],
+                X_vel[k + 1, :] == X_vel[k, :] + Ts * U[k, :],
+            ]
 
         eq_term = (
-            cp.norm1(X_pos[-1, :] - x_ref[:3])
-            + cp.norm1(U[-1, :3] - x_ref[3:6])
-            + cp.abs(X_yaw[-1] - x_ref[6])
-            + cp.abs(U[-1, 3] - x_ref[7])
+            cp.norm1(X_pos[-1, :] - x_ref[:2])
+            + cp.norm1(X_vel[-1, :] - x_ref[2:4])
         )
         ineq_u = cp.sum(cp.pos(cp.abs(U) - U_LIMS[None, :]))
+        ineq_v = cp.sum(cp.pos(cp.abs(X_vel[1:, :]) - VEL_LIMS[None, :]))
         ineq_tr_u = cp.sum(cp.pos(cp.abs(U - U_now) - l_u))
-        ineq_tr_x = cp.sum(cp.pos(cp.abs(X_pos - X_now[1:, :3]) - l_pos))
+        ineq_tr_x = cp.sum(cp.pos(cp.abs(X_pos[1:, :] - X_now[1:, :2]) - l_pos))
 
         ineq_obs = 0.0
         if x_obs is not None:
-            d_now = X_now[1:, :3] - x_obs[None, :]
+            d_now = X_now[1:, :2] - x_obs[None, :]
             d_now_norm = np.linalg.norm(d_now, axis=1)
             lin_obs = (
                 MIN_CLEARANCE * d_now_norm
-                - cp.sum(cp.multiply(d_now, X_pos - x_obs[None, :]), axis=1)
+                - cp.sum(cp.multiply(d_now, X_pos[1:, :] - x_obs[None, :]), axis=1)
             )
             ineq_obs = cp.sum(cp.pos(lin_obs))
 
         objective = cp.Minimize(
             Ts * cp.sum_squares(U)
-            + SCP_LAMBDA * (eq_term + ineq_u + ineq_tr_u + ineq_tr_x + ineq_obs)
+            + SCP_LAMBDA * (eq_term + ineq_u + ineq_v + ineq_tr_u + ineq_tr_x + ineq_obs)
         )
-        problem = cp.Problem(objective)
+        problem = cp.Problem(objective, constraints)
 
         try:
             problem.solve(solver=cp.OSQP, warm_start=True, verbose=False)
@@ -789,6 +901,10 @@ class MPCUAVNode(Node):
 
     def __init__(self):
         super().__init__('mpc_optimal_uav_node')
+        self.declare_parameter('enable_depth_camera', DEFAULT_ENABLE_DEPTH_CAMERA)
+        self.declare_parameter('mpc_solver_backend', DEFAULT_MPC_SOLVER_BACKEND)
+        self._enable_depth_camera = bool(self.get_parameter('enable_depth_camera').value)
+        self._mpc_solver_backend = str(self.get_parameter('mpc_solver_backend').value)
 
         # ── QoS for PX4 topics ──────────────────────────────────────────────
         px4_qos = QoSProfile(
@@ -804,10 +920,11 @@ class MPCUAVNode(Node):
         )
 
         # ── subscribers ─────────────────────────────────────────────────────
-        self.create_subscription(Image,
-            '/depth_camera',
-            self._depth_cb,
-            sensor_qos)
+        if self._enable_depth_camera:
+            self.create_subscription(Image,
+                '/depth_camera',
+                self._depth_cb,
+                sensor_qos)
 
         self.create_subscription(VehicleOdometry,
             '/fmu/out/vehicle_odometry',
@@ -830,20 +947,25 @@ class MPCUAVNode(Node):
         # Dataset-label publishers derived from the final solved MPC trajectory X_opt.
         self._mpc_label_path_pub = self.create_publisher(Path, '/mpc/trajectory_sequence', 10)
         self._mpc_traj_point_pub = self.create_publisher(PoseStamped, '/mpc/trajectory', 10)
+        self._fresh_committed_waypoint_pub = self.create_publisher(PoseStamped, FRESH_COMMITTED_WAYPOINT_TOPIC, 10)
+        self._hold_waypoint_pub = self.create_publisher(PoseStamped, HOLD_WAYPOINT_TOPIC, 10)
 
         # ── MPC components ──────────────────────────────────────────────────
-        self._mpc       = MPCPlanner()
+        self._mpc       = MPCPlanner(backend=self._mpc_solver_backend)
         self._obs_map   = LocalObstacleMap(FIFO_LEN)
         self._depth2obs = DepthToObstacles()
         self._bridge    = CvBridge()
         self._debug_plotter = MPCDebugPlotter2D()
 
         # ── state ───────────────────────────────────────────────────────────
+        self._solver_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='mpc_optimal')
+        self._solver_future: Future | None = None
         self._x_state   = np.zeros(8)          # [px, py, pz, vx, vy, vz, yaw, yaw_rate]
         self._yaw       = 0.0                  # vehicle yaw [rad]
         self._R_ned_body = np.eye(3)           # body FRD -> NED rotation
-        self._U_warm    = np.zeros((T_horizon, 4))  # warm-start [vx, vy, vz, yaw_rate]
+        self._U_warm    = np.zeros((T_horizon, 2))  # warm-start [ax, ay] for 2D SCP
         self._goal_ned  = np.array([20.0, 0.0, -5.0])  # target pos NED [m]
+        self._goal_generation = 0
         self._tick_count = 0
         self._warned_pose_frame = False
         self._warned_velocity_frame = False
@@ -851,22 +973,40 @@ class MPCUAVNode(Node):
         self._warned_delay_compensation_enabled = False
         self._goal_reached_announced = False
         self._nav_state = -1
+        self._last_solve_duration_sec: float | None = None
+        self._last_slow_solver_warn_monotonic = 0.0
+        self._last_setpoint_pub_monotonic: float | None = None
+        self._last_offboard_pub_monotonic: float | None = None
+        self._setpoint_pub_dt = deque(maxlen=RATE_WINDOW_LEN)
+        self._offboard_pub_dt = deque(maxlen=RATE_WINDOW_LEN)
         self._last_u_cmd_ned = np.zeros(4, dtype=float)
+        self._latest_pos_sp_ned = np.array([0.0, 20.0, -3.0], dtype=float)
+        self._latest_vel_sp_ned = np.zeros(3, dtype=float)
+        self._latest_yaw_sp: float | None = YAW_TARGET_RAD
+        self._latest_yaw_rate_sp: float | None = 0.0
+        self._latest_command_source = 'idle'
 
-        # Debug/test controls for direct velocity-command validation.
-        self.declare_parameter('test_velocity_mode', False)
-        self.declare_parameter('test_velocity_ned', [0.0, 0.0, 0.0])
-        self.declare_parameter('disable_obstacle_constraints', False)
+        self.declare_parameter('disable_obstacle_constraints', DEFAULT_OBSTACLE_CONSTRAINTS_DISABLED)
         self.declare_parameter('goal_reached_threshold_m', GOAL_REACHED_THRESHOLD_M)
         self.declare_parameter('goal_reached_yaw_threshold_rad', GOAL_REACHED_YAW_THRESHOLD_RAD)
         self.declare_parameter('enable_delay_compensation', ENABLE_DELAY_COMPENSATION)
         self.declare_parameter('delay_compensation_sec', DELAY_COMPENSATION_SEC)
+        self.declare_parameter('hold_during_solve', DEFAULT_HOLD_DURING_SOLVE)
 
         # ── MPC timer (10 Hz matches paper) ─────────────────────────────────
         self.create_timer(Ts, self._mpc_step)
-        self.create_timer(0.1, self._publish_offboard_heartbeat)
+        self.create_timer(PUBLISH_PERIOD_SEC, self._republish_latest_setpoint)
+        self.create_timer(OFFBOARD_HEARTBEAT_PERIOD_SEC, self._publish_offboard_heartbeat)
         self.create_timer(1.0 / max(DEBUG_PLOT_RATE_HZ, 0.2), self._debug_plot_step)
 
+        if not self._enable_depth_camera:
+            self.get_logger().warn(
+                'enable_depth_camera=False: depth subscription is disabled, so the obstacle map '
+                'will remain empty and MPC will run without depth-based obstacle avoidance. '
+                'Restart with --ros-args -p enable_depth_camera:=true to restore depth input.'
+            )
+
+        self.get_logger().info(f'Using MPC solver backend: {self._mpc.backend_name}')
         self._log_status_info()
 
     # ── callbacks ────────────────────────────────────────────────────────────
@@ -953,36 +1093,51 @@ class MPCUAVNode(Node):
 
     def _mpc_step(self) -> None:
         """
-        Main MPC loop, called at Ts Hz.
-
-        1.  Query local obstacle map for nearest obstacle (Eq.11)
-        2.  Run gradient-search MPC optimisation (Eq.2, Eq.8, Eq.10)
-        3.  Extract first control u*(1) and publish as TrajectorySetpoint
+        Drive the asynchronous MPC pipeline without blocking ROS timers.
         """
+        self._tick_count += 1
+        hold_during_solve = self._hold_during_solve_enabled()
+        if self._solver_future is not None and self._solver_future.done():
+            self._consume_solver_result()
+            if hold_during_solve:
+                return
+
+        if self._solver_future is not None:
+            if hold_during_solve:
+                self._activate_hold_command()
+            return
+
+        request = self._build_solver_request()
+        self._solver_future = self._solver_executor.submit(self._solve_mpc_request, request)
+        if hold_during_solve:
+            self._activate_hold_command()
+
+    def _hold_during_solve_enabled(self) -> bool:
+        """Return whether debug hold mode should replace the active command while solving."""
+        return bool(self.get_parameter('hold_during_solve').value)
+
+    def _build_solver_request(self) -> dict:
+        """Snapshot the current planner state for a background MPC solve."""
+        request_now = self.get_clock().now()
         x0_meas = self._x_state.copy()
         x0 = x0_meas.copy()
-        self._tick_count += 1
         goal_threshold_m = max(0.0, float(self.get_parameter('goal_reached_threshold_m').value))
-        goal_yaw_threshold_rad = max(
-            0.0, float(self.get_parameter('goal_reached_yaw_threshold_rad').value)
-        )
-        x_ref = np.concatenate([self._goal_ned, np.zeros(3), np.array([YAW_TARGET_RAD, 0.0])])
-        dist_goal = norm(x0_meas[:3] - self._goal_ned)
-        yaw_err = float(x_ref[6] - x0_meas[6])
+        x_ref_plan = np.array([self._goal_ned[0], self._goal_ned[1], 0.0, 0.0], dtype=float)
+        x_ref_log = np.array([self._goal_ned[0], self._goal_ned[1], self._goal_ned[2], YAW_TARGET_RAD], dtype=float)
+        dist_goal_xy = norm(x0_meas[:2] - self._goal_ned[:2])
+        z_err = float(self._goal_ned[2] - x0_meas[2])
         goal_reached = bool(
-            (dist_goal <= goal_threshold_m) and (abs(yaw_err) <= goal_yaw_threshold_rad)
+            (dist_goal_xy <= goal_threshold_m) and (abs(z_err) <= Z_HOLD_THRESHOLD_M)
         )
         if goal_reached and not self._goal_reached_announced:
             self.get_logger().info(
-                f'GOAL REACHED: pos_err={dist_goal:.2f}m <= {goal_threshold_m:.2f}m, '
-                f'yaw_err={abs(yaw_err):.2f}rad <= {goal_yaw_threshold_rad:.2f}rad'
+                f'GOAL REACHED: xy_err={dist_goal_xy:.2f}m <= {goal_threshold_m:.2f}m, '
+                f'z_err={abs(z_err):.2f}m <= {Z_HOLD_THRESHOLD_M:.2f}m'
             )
             self._goal_reached_announced = True
         elif (not goal_reached) and self._goal_reached_announced:
             self._goal_reached_announced = False
 
-        # Optional delay compensation: predict state forward using last commanded
-        # velocity to account for PX4 tracking/transport lag.
         if bool(self.get_parameter('enable_delay_compensation').value):
             tau = max(0.0, float(self.get_parameter('delay_compensation_sec').value))
             if tau > 0.0:
@@ -991,84 +1146,211 @@ class MPCUAVNode(Node):
                 x0[6] = x0_meas[6] + tau * self._last_u_cmd_ned[3]
                 x0[7] = self._last_u_cmd_ned[3]
             if not self._warned_delay_compensation_enabled:
-                self._log_status_info(x_cur=x0, x_goal=x_ref)
+                self._log_status_info(x_cur=x0, x_goal=x_ref_log)
                 self._warned_delay_compensation_enabled = True
         elif self._warned_delay_compensation_enabled:
             self._warned_delay_compensation_enabled = False
 
-        # build reference state: goal position, zero velocity, terminal yaw=0, yaw_rate=0
-
-        # ── Step 1: find nearest obstacle  (Eq.11) ──────────────────────────
+        x0_plan = np.array([x0[0], x0[1], x0[3], x0[4]], dtype=float)
         x_min = self._obs_map.nearest(x0[:3])
+        x_min_plan = None if x_min is None else np.array([x_min[0], x_min[1]], dtype=float)
         if bool(self.get_parameter('disable_obstacle_constraints').value):
             x_min = None
+            x_min_plan = None
             if not self._warned_obstacle_constraints_disabled:
                 self.get_logger().warn(
                     'Obstacle constraints disabled: MPC is running goal-tracking only.'
                 )
                 self._warned_obstacle_constraints_disabled = True
 
-        # ── Step 2: MPC solve ────────────────────────────────────────────────
-        U_opt, X_opt = self._mpc.solve(x0, x_ref, x_min, self._U_warm)
+        return {
+            'goal_generation': self._goal_generation,
+            'goal_reached': goal_reached,
+            'goal_threshold_m': goal_threshold_m,
+            'dist_goal_xy': float(dist_goal_xy),
+            'obs_snapshot': self._obs_map.snapshot(DEBUG_PLOT_OBS_MAX),
+            'request_stamp_msg': request_now.to_msg(),
+            'request_stamp_s': float(request_now.nanoseconds) * 1e-9,
+            'u_warm': self._U_warm.copy(),
+            'x0': x0,
+            'x0_meas': x0_meas,
+            'x0_plan': x0_plan,
+            'x_min': x_min,
+            'x_min_plan': x_min_plan,
+            'x_ref_log': x_ref_log,
+            'x_ref_plan': x_ref_plan,
+            'z_err': z_err,
+        }
 
-        # warm-start shift (receding horizon)  redduce convergence time by starting next MPC solve from previous solution
-        self._U_warm      = np.roll(U_opt, -1, axis=0)
-        self._U_warm[-1]  = U_opt[-1]
+    def _solve_mpc_request(self, request: dict) -> dict:
+        """Run the heavy MPC solve in a worker thread."""
+        solve_start = time.monotonic()
+        U_opt, X_opt_plan = self._mpc.solve(
+            request['x0_plan'],
+            request['x_ref_plan'],
+            request['x_min_plan'],
+            request['u_warm'],
+        )
+        solve_duration_sec = time.monotonic() - solve_start
 
-        # Label waypoints come from the *final* solved trajectory and are timestamped
-        # in the same MPC tick as the executed first setpoint.
-        label_waypoints_ned = X_opt[1:1 + MPC_LABEL_WAYPOINT_COUNT, :3]
-        if label_waypoints_ned.shape[0] == 0:
-            self.get_logger().warn('MPC solve returned no future states in X_opt; skipping publish')
+        U_warm_next = np.roll(U_opt, -1, axis=0)
+        U_warm_next[-1] = U_opt[-1]
+
+        X_opt_plot = np.zeros((X_opt_plan.shape[0], 3), dtype=float)
+        X_opt_plot[:, 0:2] = X_opt_plan[:, 0:2]
+        X_opt_plot[:, 2] = float(request['x0_meas'][2])
+
+        label_waypoints_xy = X_opt_plan[1:1 + MPC_LABEL_WAYPOINT_COUNT, :2]
+        if X_opt_plan.shape[0] > 1:
+            vel_cmd_xy = np.array(X_opt_plan[1, 2:4], dtype=float, copy=True)
+        else:
+            vel_cmd_xy = np.array(
+                request['x0_plan'][2:4] + Ts * U_opt[0, 0:2],
+                dtype=float,
+                copy=True,
+            )
+        np.clip(vel_cmd_xy, -V_MAX, V_MAX, out=vel_cmd_xy)
+
+        u_cmd = np.zeros(4, dtype=float)
+        u_cmd[0:2] = vel_cmd_xy
+        if abs(request['z_err']) > Z_HOLD_THRESHOLD_M:
+            u_cmd[2] = float(np.clip(Z_HOLD_KP * request['z_err'], -VZ_HOLD_MAX, VZ_HOLD_MAX))
+
+        goal_z_ned = float(self._goal_ned[2])
+
+        if label_waypoints_xy.shape[0] > 0:
+            pos_sp_ned = np.array(
+                [label_waypoints_xy[0, 0], label_waypoints_xy[0, 1], goal_z_ned],
+                dtype=float,
+            )
+        else:
+            pos_sp_ned = np.array(
+                [float(request['x0_meas'][0]), float(request['x0_meas'][1]), goal_z_ned],
+                dtype=float,
+            )
+
+        return {
+            'X_opt_plot': X_opt_plot,
+            'U_warm_next': U_warm_next,
+            'goal_generation': request['goal_generation'],
+            'goal_z_ned': goal_z_ned,
+            'goal_reached': request['goal_reached'],
+            'goal_threshold_m': request['goal_threshold_m'],
+            'dist_goal_xy': request['dist_goal_xy'],
+            'label_waypoints_xy': label_waypoints_xy,
+            'obs_snapshot': request['obs_snapshot'],
+            'pos_sp_ned': pos_sp_ned,
+            'request_stamp_msg': request['request_stamp_msg'],
+            'request_stamp_s': request['request_stamp_s'],
+            'solve_duration_sec': solve_duration_sec,
+            'solver_status': getattr(self._mpc, 'last_solver_status', 'unknown'),
+            'u_cmd': u_cmd,
+            'x0': request['x0'],
+            'x_min': request['x_min'],
+            'x_ref_log': request['x_ref_log'],
+            'z_err': request['z_err'],
+        }
+
+    def _consume_solver_result(self) -> None:
+        """Apply a completed background MPC solve on the ROS timer thread."""
+        future = self._solver_future
+        self._solver_future = None
+        if future is None:
             return
 
-        now_ros = self.get_clock().now()
-        stamp_msg = now_ros.to_msg()
-        stamp_us = now_ros.nanoseconds // 1000
-        self._publish_mpc_label_trajectory(label_waypoints_ned, stamp_msg)
+        try:
+            result = future.result()
+        except Exception as exc:
+            self.get_logger().error(f'MPC solve failed: {exc}')
+            self._U_warm[:] = 0.0
+            return
 
-        # ── Step 3: publish first optimal control u*(1) ─────────────────────
-        u_cmd = U_opt[0].copy()             # [vx_ref, vy_ref, vz_ref, yaw_rate_ref]
-        if bool(self.get_parameter('test_velocity_mode').value):
-            u_test = self._parse_test_velocity_ned(self.get_parameter('test_velocity_ned').value)
-            np.clip(u_test, -V_MAX, V_MAX, out=u_test)
-            u_cmd[:3] = u_test
-        self._last_u_cmd_ned = np.array(u_cmd, dtype=float, copy=True)
-        pos_sp_ned = label_waypoints_ned[0]
-        self._publish_mpc_trajectory_point(pos_sp_ned, stamp_msg)
-        yaw_sp = float(X_opt[1, 6]) if X_opt.shape[0] > 1 else float(x0[6])
-        self._publish_setpoint(
-            pos_sp_ned,
-            u_cmd[:3],
-            yaw_sp=yaw_sp,
-            yaw_rate_sp=float(u_cmd[3]),
-            stamp_us=stamp_us
+        if result['goal_generation'] != self._goal_generation:
+            return
+
+        self._last_solve_duration_sec = float(result['solve_duration_sec'])
+        if self._last_solve_duration_sec > SOLVE_WARN_SEC:
+            now_monotonic = time.monotonic()
+            if now_monotonic - self._last_slow_solver_warn_monotonic >= 2.0:
+                self.get_logger().warn(
+                    f'MPC solve latency {1000.0 * self._last_solve_duration_sec:.0f} ms exceeds '
+                    f'{1000.0 * SOLVE_WARN_SEC:.0f} ms; publish timers stay live, but MPC commands can go stale.'
+                )
+                self._last_slow_solver_warn_monotonic = now_monotonic
+
+        self._U_warm = np.array(result['U_warm_next'], dtype=float, copy=True)
+        label_waypoints_xy = np.array(result['label_waypoints_xy'], dtype=float, copy=False)
+        if label_waypoints_xy.shape[0] == 0:
+            self.get_logger().warn('MPC solve returned no future states in X_opt; keeping previous command')
+            return
+
+        stamp_msg = result['request_stamp_msg']
+        self._publish_mpc_label_trajectory(label_waypoints_xy, stamp_msg, float(result['goal_z_ned']))
+
+        self._last_u_cmd_ned = np.array(result['u_cmd'], dtype=float, copy=True)
+        self._latest_pos_sp_ned = np.array(result['pos_sp_ned'], dtype=float, copy=True)
+        self._latest_vel_sp_ned = np.array(result['u_cmd'][:3], dtype=float, copy=True)
+        self._latest_yaw_sp = YAW_TARGET_RAD
+        self._latest_yaw_rate_sp = 0.0
+        self._latest_command_source = 'fresh'
+        self._publish_mpc_trajectory_point(self._latest_pos_sp_ned, stamp_msg)
+        self._publish_waypoint_event(
+            self._fresh_committed_waypoint_pub,
+            self._latest_pos_sp_ned,
+            stamp_msg,
         )
-        self._log_setpoint_debug(x0, x_ref, x_min, X_opt, pos_sp_ned, u_cmd[:3])
-        self._log_velocity_tracking_debug(x0[3:6], u_cmd[:3])
+        self._log_setpoint_debug(
+            result['x0'],
+            result['x_ref_log'],
+            result['x_min'],
+            result['X_opt_plot'],
+            self._latest_pos_sp_ned,
+            self._latest_vel_sp_ned,
+            solver_status=result['solver_status'],
+        )
         self._debug_plotter.submit(
-            x0=x0,
-            x_ref=x_ref,
-            X_opt=X_opt,
-            x_min=x_min,
-            obs_pts=self._obs_map.snapshot(DEBUG_PLOT_OBS_MAX),
-            goal_reached=goal_reached,
-            dist_goal=dist_goal,
-            goal_threshold_m=goal_threshold_m,
-            yaw_err=yaw_err,
-            goal_yaw_threshold_rad=goal_yaw_threshold_rad,
+            x0=result['x0'],
+            x_ref=np.array([self._goal_ned[0], self._goal_ned[1], self._goal_ned[2]], dtype=float),
+            X_opt=result['X_opt_plot'],
+            x_min=result['x_min'],
+            obs_pts=result['obs_snapshot'],
+            goal_reached=bool(result['goal_reached']),
+            dist_goal=float(result['dist_goal_xy']),
+            goal_threshold_m=float(result['goal_threshold_m']),
+            yaw_err=None,
+            goal_yaw_threshold_rad=0.0,
         )
 
-        # diagnostics
-        dist_obs  = norm(x_min - x0[:3]) if x_min is not None else float('inf')
+        dist_obs = norm(result['x_min'] - result['x0'][:3]) if result['x_min'] is not None else float('inf')
         self.get_logger().debug(
-            f'dist_goal={dist_goal:.2f}m  dist_obs={dist_obs:.2f}m  '
-            f'u=[{u_cmd[0]:.2f},{u_cmd[1]:.2f},{u_cmd[2]:.2f}] m/s '
-            f'yaw={x0[6]:.2f} rad yaw_rate_cmd={u_cmd[3]:.2f} rad/s')
+            f'dist_goal_xy={result["dist_goal_xy"]:.2f}m  z_err={result["z_err"]:.2f}m  dist_obs={dist_obs:.2f}m  '
+            f'u=[{self._last_u_cmd_ned[0]:.2f},{self._last_u_cmd_ned[1]:.2f},{self._last_u_cmd_ned[2]:.2f}] m/s '
+            f'yaw={result["x0"][6]:.2f} rad yaw_rate_cmd={self._last_u_cmd_ned[3]:.2f} rad/s')
 
     def _debug_plot_step(self) -> None:
         """Separate timer loop for debug plotting (main thread-safe)."""
         self._debug_plotter.draw_latest()
+
+    def _activate_hold_command(self) -> None:
+        """While a solve is inflight, command a zero-velocity hold at the current pose."""
+        self._latest_pos_sp_ned = np.array(self._x_state[:3], dtype=float, copy=True)
+        self._latest_vel_sp_ned = np.zeros(3, dtype=float)
+        self._last_u_cmd_ned[:] = 0.0
+        self._latest_yaw_sp = float(self._x_state[6]) if self._x_state.shape[0] >= 7 else YAW_TARGET_RAD
+        self._latest_yaw_rate_sp = 0.0
+        self._latest_command_source = 'hold'
+
+    @staticmethod
+    def _publish_waypoint_event(pub, pos_ned: np.ndarray, stamp_msg) -> None:
+        """Publish a single NED waypoint event for downstream dataset consumers."""
+        msg = PoseStamped()
+        msg.header.stamp = stamp_msg
+        msg.header.frame_id = 'ned'
+        msg.pose.position.x = float(pos_ned[0])
+        msg.pose.position.y = float(pos_ned[1])
+        msg.pose.position.z = float(pos_ned[2])
+        msg.pose.orientation.w = 1.0
+        pub.publish(msg)
 
     def _publish_setpoint(
         self,
@@ -1085,8 +1367,8 @@ class MPCUAVNode(Node):
         sp = TrajectorySetpoint()
         sp.timestamp = int(stamp_us) if stamp_us is not None else self.get_clock().now().nanoseconds // 1000   # µs
 
-        # Position is optional. In velocity-only mode keep it NaN so PX4 uses
-        # U_opt directly as the active offboard command in NED.
+        # Position is optional. In velocity-only mode keep it NaN so PX4 tracks
+        # the velocity feedforward command directly in NED.
         if USE_VELOCITY_ONLY_SETPOINT:
             sp.position[0] = float('nan')
             sp.position[1] = float('nan')
@@ -1110,56 +1392,73 @@ class MPCUAVNode(Node):
 
         self._sp_pub.publish(sp)
 
-    def _publish_offboard_heartbeat(self) -> None:
-        """Keep PX4 in velocity offboard mode so U_opt is interpreted as NED velocity command."""
-        msg = OffboardControlMode()
-        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        msg.position = not USE_VELOCITY_ONLY_SETPOINT
-        msg.velocity = USE_VELOCITY_ONLY_SETPOINT
-        msg.acceleration = False
-        self._offboard_mode_pub.publish(msg)
+    def _record_timer_interval(self, last_attr: str, samples: deque) -> None:
+        """Track actual timer cadence for lightweight publish-rate diagnostics."""
+        now = time.monotonic()
+        last = getattr(self, last_attr)
+        if last is not None:
+            samples.append(now - last)
+        setattr(self, last_attr, now)
 
     @staticmethod
-    def _parse_test_velocity_ned(raw_value) -> np.ndarray:
-        """Parse test_velocity_ned parameter into a 3D NED command vector."""
-        try:
-            if isinstance(raw_value, np.ndarray):
-                vals = raw_value.astype(float).flatten()
-            else:
-                vals = np.array(list(raw_value), dtype=float).flatten()
-            if vals.size < 3:
-                return np.zeros(3, dtype=float)
-            return vals[:3].astype(float, copy=False)
-        except Exception:
-            return np.zeros(3, dtype=float)
+    def _timer_rate_hz(samples: deque) -> float | None:
+        """Return average callback rate in Hz from recent timer intervals."""
+        if not samples:
+            return None
+        mean_dt = float(np.mean(samples))
+        if mean_dt <= 1e-6:
+            return None
+        return 1.0 / mean_dt
 
-    def _log_velocity_tracking_debug(self, vel_meas_ned: np.ndarray, vel_cmd_ned: np.ndarray) -> None:
-        """Log measured-vs-commanded velocity in NED/ENU for frame/sign debugging."""
-        if self._tick_count % SETPOINT_LOG_EVERY_N != 0:
-            return
-        self._log_status_info()
+    def _publish_offboard_heartbeat(self) -> None:
+        """Keep PX4 in velocity offboard mode for NED velocity command tracking."""
+        self._record_timer_interval('_last_offboard_pub_monotonic', self._offboard_pub_dt)
+        msg = OffboardControlMode()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.position = False
+        msg.velocity = True
+        msg.acceleration = False
+        msg.attitude = False
+        msg.body_rate = False
+        self._offboard_mode_pub.publish(msg)
 
-    def _publish_mpc_label_trajectory(self, waypoints_ned: np.ndarray, stamp_msg) -> None:
+    def _republish_latest_setpoint(self) -> None:
+        """Republish the latest setpoint at a stable rate independent of MPC solve time."""
+        self._record_timer_interval('_last_setpoint_pub_monotonic', self._setpoint_pub_dt)
+        self._publish_setpoint(
+            self._latest_pos_sp_ned,
+            self._latest_vel_sp_ned,
+            yaw_sp=self._latest_yaw_sp,
+            yaw_rate_sp=self._latest_yaw_rate_sp,
+        )
+        if self._latest_command_source == 'hold':
+            self._publish_waypoint_event(
+                self._hold_waypoint_pub,
+                self._latest_pos_sp_ned,
+                self.get_clock().now().to_msg(),
+            )
+
+    def _publish_mpc_label_trajectory(self, waypoints_xy: np.ndarray, stamp_msg, goal_z_ned: float) -> None:
         """
         Publish timestamped MPC label trajectory (next 5 waypoints) for dataset generation.
-        Waypoints are taken directly from the final solved X_opt[1:1+K, :3].
+        Labels are planar waypoints in NED with z fixed to the current goal altitude.
         """
         path = Path()
         path.header.stamp = stamp_msg
         path.header.frame_id = 'ned'
 
-        if waypoints_ned.shape[0] < MPC_LABEL_WAYPOINT_COUNT:
+        if waypoints_xy.shape[0] < MPC_LABEL_WAYPOINT_COUNT:
             self.get_logger().warn(
-                f'MPC label trajectory shorter than expected: {waypoints_ned.shape[0]} < {MPC_LABEL_WAYPOINT_COUNT}'
+                f'MPC label trajectory shorter than expected: {waypoints_xy.shape[0]} < {MPC_LABEL_WAYPOINT_COUNT}'
             )
 
-        for idx, p in enumerate(waypoints_ned):
+        for idx, p in enumerate(waypoints_xy):
             pose = PoseStamped()
             pose.header.stamp = stamp_msg
             pose.header.frame_id = 'ned'
             pose.pose.position.x = float(p[0])
             pose.pose.position.y = float(p[1])
-            pose.pose.position.z = float(p[2])
+            pose.pose.position.z = float(goal_z_ned)
             # Orientation unused for label trajectory; identity quaternion for completeness.
             pose.pose.orientation.w = 1.0
             path.poses.append(pose)
@@ -1183,18 +1482,22 @@ class MPCUAVNode(Node):
                             x_min: np.ndarray | None,
                             X_opt: np.ndarray,
                             pos_sp_ned: np.ndarray,
-                            vel_sp_ned: np.ndarray) -> None:
+                            vel_sp_ned: np.ndarray,
+                            solver_status: str | None = None) -> None:
         """Throttle MPC/PX4 setpoint logs to debug frame/sign mismatches."""
         if self._tick_count % SETPOINT_LOG_EVERY_N != 0:
             return
-        self._log_status_info(x_cur=x0, x_goal=x_ref)
+        self._log_status_info(x_cur=x0, x_goal=x_ref, solver_status=solver_status)
 
     def set_goal(self, x: float, y: float, z: float) -> None:
         """Update navigation goal in NED [m]. z negative = up in NED."""
         self._goal_ned = np.array([x, y, z])
+        self._goal_generation += 1
         self._obs_map.clear()
         self._U_warm[:] = 0.0
         self._last_u_cmd_ned[:] = 0.0
+        self._latest_vel_sp_ned[:] = 0.0
+        self._goal_reached_announced = False
         self._log_status_info()
 
     @staticmethod
@@ -1231,19 +1534,30 @@ class MPCUAVNode(Node):
         if x_cur is None:
             x_cur = self._x_state
         if x_goal is None:
-            x_goal = np.concatenate([self._goal_ned, np.zeros(3), np.array([YAW_TARGET_RAD, 0.0])])
+            x_goal = np.array([self._goal_ned[0], self._goal_ned[1], self._goal_ned[2], YAW_TARGET_RAD], dtype=float)
         if solver_status is None:
             solver_status = getattr(self._mpc, 'last_solver_status', 'unknown')
         yaw_cur = float(x_cur[6]) if x_cur.shape[0] >= 7 else 0.0
-        yaw_goal = float(x_goal[6]) if x_goal.shape[0] >= 7 else YAW_TARGET_RAD
+        yaw_goal = float(x_goal[3]) if x_goal.shape[0] >= 4 else YAW_TARGET_RAD
         pos_err_vec = x_goal[:3] - x_cur[:3]
         pos_err = float(norm(pos_err_vec))
         yaw_err = float(yaw_goal - yaw_cur)
+        vel_odom = x_cur[3:6] if x_cur.shape[0] >= 6 else np.zeros(3, dtype=float)
+        vel_cmd = self._last_u_cmd_ned[:3]
+        setpoint_rate_hz = self._timer_rate_hz(self._setpoint_pub_dt)
+        offboard_rate_hz = self._timer_rate_hz(self._offboard_pub_dt)
+        solve_ms = None if self._last_solve_duration_sec is None else (1000.0 * self._last_solve_duration_sec)
+        setpoint_rate_txt = 'n/a' if setpoint_rate_hz is None else f'{setpoint_rate_hz:.1f}'
+        offboard_rate_txt = 'n/a' if offboard_rate_hz is None else f'{offboard_rate_hz:.1f}'
+        solve_ms_txt = 'n/a' if solve_ms is None else f'{solve_ms:.0f}'
         self.get_logger().info(
             f'current=[{x_cur[0]:.2f},{x_cur[1]:.2f},{x_cur[2]:.2f},{yaw_cur:.2f}] '
+            f'vel_odom=[{vel_odom[0]:.2f},{vel_odom[1]:.2f},{vel_odom[2]:.2f}] '
+            f'vel_cmd=[{vel_cmd[0]:.2f},{vel_cmd[1]:.2f},{vel_cmd[2]:.2f}] '
             f'goal=[{x_goal[0]:.2f},{x_goal[1]:.2f},{x_goal[2]:.2f},{yaw_goal:.2f}] '
             f'Error=[{pos_err_vec[0]:.2f},{pos_err_vec[1]:.2f},{pos_err_vec[2]:.2f},{yaw_err:.2f}] '
-            f'Error_norm={pos_err:.2f} Solver={solver_status}'
+            f'ror_norm={pos_err:.2f} Solver result={solver_status} '
+            f'sp_rate={setpoint_rate_txt}Hz offboard_rate={offboard_rate_txt}Hz solve_ms={solve_ms_txt}'
         )
 
     @staticmethod
@@ -1269,6 +1583,13 @@ class MPCUAVNode(Node):
         return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
 
     def destroy_node(self):
+        if self._solver_future is not None:
+            self._solver_future.cancel()
+            self._solver_future = None
+        try:
+            self._solver_executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            self._solver_executor.shutdown(wait=False)
         self._debug_plotter.close()
         return super().destroy_node()
 
@@ -1279,7 +1600,7 @@ def main(args=None):
 
     # Example Gazebo world goal (ENU): x=East, y=North, z=Up
     # This maps to PX4 local NED internally.
-    node.set_goal_gazebo(32.91, 0.00, 3.0)
+    node.set_goal_gazebo(32.91, 0.00, 2.5)
 
     try:
         rclpy.spin(node)

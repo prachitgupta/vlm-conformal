@@ -13,6 +13,7 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config', [
             'config/llm_prompt.txt',
+            'config/llm_planner_prompt.txt',
             'config/voxl_llm_prompt.txt',
         ]),
     ],
@@ -41,6 +42,8 @@ setup(
             'dataset_generator = llm_drone.dataset_generator:main',
             'dataset_generator_sync = llm_drone.dataset_generator_sync:main',
             'debug_pointcloud_obstacles = llm_drone.debug_pointcloud_obstacles:main',
+            'eval_llm = llm_drone.eval:main',
+            'generate_synthetic_prompts = llm_drone.generate_synthetic_prompts:main',
         ],
     },
 )

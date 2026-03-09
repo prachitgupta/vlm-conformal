@@ -5,20 +5,23 @@ Task:
 - Plan a short local trajectory of the next 5 waypoints (not just one waypoint).
 - The 5-waypoint sequence should be consistent, smooth, collision-safe, and useful as a local trajectory label.
 - Use all provided context, including odometry-derived state and obstacle/depth cues.
+- Plan only in the horizontal plane: choose waypoint x and y values.
+- For every waypoint, z must be fixed to the goal altitude provided in the prompt.
 
 Frame and units:
 - Coordinate frame is NED (North-East-Down), meters.
 - x: North, y: East, z: Down.
 - More negative z means higher altitude above ground.
+- Output waypoints still include x, y, z fields, but z must stay constant at the goal z for all 5 waypoints.
 
 Operational constraints:
 - Hard safety: never place waypoints inside or too close to obstacles.
 - Keep at least 1.5 m obstacle clearance when feasible.
 - Keep waypoints dynamically feasible and smooth (no abrupt reversals or zig-zags).
-- Prefer forward progress toward the goal.
+- Ensure forward progress toward the goal.
 - First waypoint must be local: at most 3.0 m from current position.
 - Consecutive waypoint spacing should usually be 0.5 m to 3.0 m unless safety requires shorter moves.
-- Respect altitude safety: keep z < 0 unless explicitly instructed otherwise.
+- Do not change altitude inside the waypoint sequence; use the goal z exactly.
 
 Planning objective priority:
 1) Safety and feasibility
@@ -63,22 +66,22 @@ Output:
   "reasoning": "Bypass obstacle on clearer right side, then begin merging back toward goal line."
 }
 
-Example C (need vertical avoidance):
+Example C (obstacle ahead, bypass on left):
 Input summary:
 - current_position: [0.0, 0.0, -2.0]
 - goal_position: [8.0, 0.0, -2.0]
-- obstacle cue: obstacle near current altitude directly ahead, vertical clearance available
+- obstacle cue: right side is crowded, left side is clearer
 Output:
 {
   "waypoints": [
-    {"x": 0.9, "y": 0.0, "z": -2.5},
-    {"x": 1.8, "y": 0.0, "z": -3.0},
-    {"x": 2.8, "y": 0.0, "z": -3.2},
-    {"x": 4.0, "y": 0.0, "z": -3.1},
-    {"x": 5.1, "y": 0.0, "z": -2.8}
+    {"x": 0.8, "y": -0.7, "z": -2.0},
+    {"x": 1.8, "y": -1.3, "z": -2.0},
+    {"x": 3.0, "y": -1.7, "z": -2.0},
+    {"x": 4.1, "y": -1.4, "z": -2.0},
+    {"x": 5.2, "y": -0.8, "z": -2.0}
   ],
   "selected_waypoint_index": 0,
-  "reasoning": "Use a smooth 5-point climb in NED (more negative z) to clear obstacle, then level back."
+  "reasoning": "Left side is clearer, so take a smooth left detour while keeping the goal altitude fixed."
 }
 
 SECTION 3: EXPECTED OUTPUT
@@ -101,6 +104,7 @@ Schema rules:
 - "waypoints" must contain exactly 5 waypoint objects.
 - Every waypoint must include numeric x, y, z (floats or ints are acceptable JSON numbers).
 - Waypoints must be ordered in execution order from immediate next step to farther local lookahead.
+- All 5 waypoint z values must be exactly equal to the goal z given in the prompt.
 - "selected_waypoint_index" must be an integer and should be 0 (controller executes the first point first).
 - "reasoning" must be short (<= 35 words).
 
@@ -108,9 +112,10 @@ SECTION 4: VERIFICATION LAYER (INTERNAL CHECK BEFORE OUTPUT)
 Before finalizing, verify and repair if needed:
 1) JSON is syntactically valid and contains only the required top-level keys.
 2) "waypoints" length is exactly 5 and each waypoint has numeric x, y, z.
-3) "selected_waypoint_index" is exactly 0 and valid for the list.
-4) First waypoint is within 3.0 m of current position.
-5) Consecutive waypoint transitions are smooth and feasible (no abrupt reversals).
-6) Waypoints maintain obstacle clearance and do not cut through obvious blocked sectors.
-7) Trajectory generally progresses toward goal unless safety forces a temporary detour.
+3) Every waypoint z is exactly the goal z from the prompt.
+4) "selected_waypoint_index" is exactly 0 and valid for the list.
+5) First waypoint is within 3.0 m of current position.
+6) Consecutive waypoint transitions are smooth and feasible (no abrupt reversals).
+7) Waypoints maintain obstacle clearance and do not cut through obvious blocked sectors.
+8) Trajectory generally progresses toward goal unless safety forces a temporary detour.
 If any check fails, repair and re-validate before output.
