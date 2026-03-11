@@ -257,6 +257,26 @@ def formatting_prompts_func(example, tokenizer):
     ]
 
 
+def prepare_generation_inputs(tokenizer, messages, device):
+    """
+    Handle tokenizer.apply_chat_template returning either a Tensor or a
+    BatchEncoding, depending on the transformers version.
+    """
+    encoded = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_tensors="pt",
+    )
+    encoded = encoded.to(device)
+
+    if isinstance(encoded, torch.Tensor):
+        return {"input_ids": encoded}, int(encoded.shape[1])
+
+    input_ids = encoded["input_ids"]
+    return dict(encoded), int(input_ids.shape[1])
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: SYSTEM PROMPT
 #
@@ -687,16 +707,15 @@ class WaypointEvalCallback(TrainerCallback):
 
             # Build the input (system + user only, no assistant turn)
             input_messages = [m for m in messages if m["role"] != "assistant"]
-            input_ids = self.tokenizer.apply_chat_template(
+            model_inputs, prompt_len = prepare_generation_inputs(
+                self.tokenizer,
                 input_messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_tensors="pt"
-            ).to(self.model.device)
+                self.model.device,
+            )
 
             with torch.no_grad():
                 output_ids = self.model.generate(
-                    input_ids=input_ids,
+                    **model_inputs,
                     max_new_tokens=400,
                     temperature=0.1,   # Near-deterministic for eval
                     do_sample=True,
@@ -704,7 +723,7 @@ class WaypointEvalCallback(TrainerCallback):
                 )
 
             # Decode only the new tokens (not the input)
-            new_tokens = output_ids[0][input_ids.shape[1]:]
+            new_tokens = output_ids[0][prompt_len:]
             prediction = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
 
             # --- Metric 1: JSON validity ---
@@ -895,23 +914,18 @@ def run_inference(model_path: str, sensor_prompt: str) -> dict:
         {"role": "user",    "content": sensor_prompt},
     ]
 
-    input_ids = tokenizer.apply_chat_template(
-        messages,
-        tokenize=True,
-        add_generation_prompt=True,
-        return_tensors="pt"
-    ).to(model.device)
+    model_inputs, prompt_len = prepare_generation_inputs(tokenizer, messages, model.device)
 
     with torch.no_grad():
         output_ids = model.generate(
-            input_ids=input_ids,
+            **model_inputs,
             max_new_tokens=400,
             temperature=0.1,
             do_sample=True,
             pad_token_id=tokenizer.pad_token_id,
         )
 
-    new_tokens = output_ids[0][input_ids.shape[1]:]
+    new_tokens = output_ids[0][prompt_len:]
     response = tokenizer.decode(new_tokens, skip_special_tokens=True)
 
     try:
