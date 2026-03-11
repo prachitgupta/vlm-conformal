@@ -252,7 +252,9 @@ def formatting_prompts_func(example, tokenizer):
             tokenizer.apply_chat_template(message_list, tokenize=False, add_generation_prompt=False)
             for message_list in messages
         ]
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    return [
+        tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
