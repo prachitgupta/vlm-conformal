@@ -56,9 +56,9 @@ from px4_msgs.msg import TrajectorySetpoint, VehicleOdometry, OffboardControlMod
 # MPC PARAMETERS  (tune these)
 # ─────────────────────────────────────────────────────────────────────────────
 Ts          = 0.1         # sampling time [s]
-T_horizon   = 20         # MPC prediction horizon [steps]
-V_MAX       = 10.0        # per-axis max commanded velocity [m/s]
-A_MAX       = 8.0         # per-axis max commanded acceleration [m/s^2]
+T_horizon   = 50         # MPC prediction horizon [steps]
+V_MAX       = 15.0        # per-axis max commanded velocity [m/s]
+A_MAX       = 10.0         # per-axis max commanded acceleration [m/s^2]
 N_OBS       = 1          # nearest-point method: N=1 (Section III-A)
 Q_diag      = np.array([20.0, 20.0, 20.0, 1, 1, 1])   # tracking weight Q
 SCP_MAX_OUTER_ITERS = 4    # sequential convexification iterations per MPC cycle

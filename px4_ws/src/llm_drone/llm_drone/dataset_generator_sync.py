@@ -27,7 +27,7 @@ from nav_msgs.msg import Odometry, Path as RosPath
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
-from llm_drone.eval import EvalResult, evaluate_response, _sanitize_for_json
+from llm_drone.eval import EvalResult, evaluate_response
 from llm_drone.llm_prompt_common import (
     DATASET_PROMPT_FILENAME,
     DEPTH_HFOV_DEG,
@@ -181,8 +181,8 @@ class SyncDatasetGenerator(Node):
         self.declare_parameter('waypoint_buffer_size', 400)
         self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
         self.declare_parameter('eval_dt_s', 0.1)
-        self.declare_parameter('eval_v_max_mps', 2.0)
-        self.declare_parameter('eval_a_max_mps2', 1.5)
+        self.declare_parameter('eval_v_max_mps', 1.0)
+        self.declare_parameter('eval_a_max_mps2', 10.0)
         self.declare_parameter('eval_safety_radius_m', 0.5)
 
         self.goal = self.convert_goal_to_ned(
@@ -522,7 +522,7 @@ class SyncDatasetGenerator(Node):
             self.get_logger().warn('Dropped label: environment vector unavailable')
             return
         env_text = translate_vector_to_nlp(env_vector)
-        user_prompt = compose_final_prompt(env_vector, env_text)
+        user_prompt = env_text.strip()
         label_response = self._build_label_response(label_waypoints, label_mode, scene)
 
         row = [
@@ -554,7 +554,6 @@ class SyncDatasetGenerator(Node):
                 }
                 for p in label_waypoints
             ],
-            'selected_waypoint_index': 0,
         }
         eval_result = evaluate_response(
             current_position_ned=np.asarray(scene['position'], dtype=float),
@@ -577,16 +576,6 @@ class SyncDatasetGenerator(Node):
                 'This is the 5-step MPC waypoint rollout aligned to the prompt scene.',
             ),
         )
-        base_response['evaluation'] = {
-            'passed': bool(eval_result.passed),
-            'format_pass': bool(eval_result.format_pass),
-            'kinematic_pass': bool(eval_result.kinematic_pass),
-            'progress_pass': bool(eval_result.progress_pass),
-            'safety_pass': bool(eval_result.safety_pass),
-            'errors': list(eval_result.errors),
-            'warnings': list(eval_result.warnings),
-            'metrics': _sanitize_for_json(eval_result.metrics),
-        }
         return base_response
 
     @staticmethod
@@ -618,8 +607,7 @@ class SyncDatasetGenerator(Node):
         warning_text = f' Primary warning: {eval_result.warnings[0]}' if eval_result.warnings else ''
 
         return (
-            f'{prefix} Waypoint 0 is selected because execution starts from the first step of the rollout. '
-            f'It reduces goal distance by {progress_selected:.2f} m immediately and by {progress_final:.2f} m by the final waypoint. '
+            f'{prefix} The rollout reduces goal distance by {progress_selected:.2f} m immediately and by {progress_final:.2f} m by the final waypoint. '
             f'The rollout reaches max speed {max_speed:.2f} m/s and max acceleration {max_accel:.2f} m/s^2. '
             f'{clearance_text} {monotone_text} {status_text}{warning_text}'
         )

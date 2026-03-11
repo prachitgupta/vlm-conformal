@@ -219,7 +219,6 @@ Sensor attachments:
 
 Return only one JSON object with keys:
 - waypoints
-- selected_waypoint_index
 - reasoning
 
 All waypoint coordinates must be in NED.

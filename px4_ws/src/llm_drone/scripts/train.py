@@ -248,10 +248,11 @@ def validate_completion(completion_str: str) -> bool:
         return False
 
     selected_idx = data.get("selected_waypoint_index", 0)
-    if not isinstance(selected_idx, int):
-        return False
-    if selected_idx < 0 or selected_idx >= len(waypoints):
-        return False
+    if "selected_waypoint_index" in data:
+        if not isinstance(selected_idx, int):
+            return False
+        if selected_idx < 0 or selected_idx >= len(waypoints):
+            return False
 
     # Each waypoint must have x, y, z as finite numbers
     for wp in waypoints:
@@ -285,7 +286,6 @@ def normalize_completion_for_training(completion_str: str) -> str:
     data = json.loads(completion_str)
     normalized = {
         "waypoints": data["waypoints"],
-        "selected_waypoint_index": int(data.get("selected_waypoint_index", 0)),
         "reasoning": str(data.get("reasoning", "")).strip(),
     }
     return json.dumps(normalized, separators=(",", ":"))
@@ -777,7 +777,7 @@ def run_inference(model_path: str, sensor_prompt: str) -> dict:
         sensor_prompt: The NL description of current drone state (your existing prompt format)
 
     Returns:
-        dict with keys: waypoints, selected_waypoint_index, reasoning
+        dict with keys: waypoints, reasoning
     """
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_path,

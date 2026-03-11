@@ -44,7 +44,6 @@ Output:
     {"x": 4.8, "y": 0.0, "z": -2.0},
     {"x": 6.0, "y": 0.0, "z": -2.0}
   ],
-  "selected_waypoint_index": 0,
   "reasoning": "Clear corridor, so generate a smooth straight 5-point local trajectory toward goal."
 }
 
@@ -62,7 +61,6 @@ Output:
     {"x": 4.3, "y": 1.8, "z": -2.0},
     {"x": 5.4, "y": 1.1, "z": -2.0}
   ],
-  "selected_waypoint_index": 0,
   "reasoning": "Bypass obstacle on clearer right side, then begin merging back toward goal line."
 }
 
@@ -80,7 +78,6 @@ Output:
     {"x": 4.1, "y": -1.4, "z": -2.0},
     {"x": 5.2, "y": -0.8, "z": -2.0}
   ],
-  "selected_waypoint_index": 0,
   "reasoning": "Left side is clearer, so take a smooth left detour while keeping the goal altitude fixed."
 }
 
@@ -96,7 +93,6 @@ Required schema (exact top-level keys):
     {"x": <float>, "y": <float>, "z": <float>},
     {"x": <float>, "y": <float>, "z": <float>}
   ],
-  "selected_waypoint_index": <integer>,
   "reasoning": "<short plain text>"
 }
 
@@ -105,7 +101,6 @@ Schema rules:
 - Every waypoint must include numeric x, y, z (floats or ints are acceptable JSON numbers).
 - Waypoints must be ordered in execution order from immediate next step to farther local lookahead.
 - All 5 waypoint z values must be exactly equal to the goal z given in the prompt.
-- "selected_waypoint_index" must be an integer and should be 0 (controller executes the first point first).
 - "reasoning" must be short (<= 35 words).
 
 SECTION 4: VERIFICATION LAYER (INTERNAL CHECK BEFORE OUTPUT)
@@ -113,9 +108,8 @@ Before finalizing, verify and repair if needed:
 1) JSON is syntactically valid and contains only the required top-level keys.
 2) "waypoints" length is exactly 5 and each waypoint has numeric x, y, z.
 3) Every waypoint z is exactly the goal z from the prompt.
-4) "selected_waypoint_index" is exactly 0 and valid for the list.
-5) First waypoint is within 3.0 m of current position.
-6) Consecutive waypoint transitions are smooth and feasible (no abrupt reversals).
-7) Waypoints maintain obstacle clearance and do not cut through obvious blocked sectors.
-8) Trajectory generally progresses toward goal unless safety forces a temporary detour.
+4) First waypoint is within 3.0 m of current position.
+5) Consecutive waypoint transitions are smooth and feasible (no abrupt reversals).
+6) Waypoints maintain obstacle clearance and do not cut through obvious blocked sectors.
+7) Trajectory generally progresses toward goal unless safety forces a temporary detour.
 If any check fails, repair and re-validate before output.
