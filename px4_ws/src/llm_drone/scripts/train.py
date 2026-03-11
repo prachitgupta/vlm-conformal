@@ -56,8 +56,9 @@ from typing import Optional
 import torch
 torch.cuda.set_per_process_memory_fraction(0.80, device=0)
 from datasets import Dataset
-from trl import SFTTrainer, SFTConfig
+# Import Unsloth before TRL so its trainer/config patches are applied correctly.
 from unsloth import FastLanguageModel
+from trl import SFTTrainer, SFTConfig
 
 try:
     from llm_drone.llm_prompt_common import DATASET_PROMPT_FILENAME, load_system_prompt
@@ -615,7 +616,10 @@ def build_training_args(cfg: TrainConfig, tokenizer, train_dataset_len: int) -> 
     elif "max_seq_length" in sft_kwargs:
         log.info("Using SFTConfig(max_seq_length=%s)", sft_kwargs["max_seq_length"])
 
-    return SFTConfig(**sft_kwargs)
+    training_args = SFTConfig(**sft_kwargs)
+    if hasattr(training_args, "eos_token"):
+        training_args.eos_token = tokenizer.eos_token
+    return training_args
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -764,6 +768,12 @@ def main():
 
     # 4. Build training arguments
     training_args = build_training_args(cfg, tokenizer, len(train_dataset))
+    log.info(
+        "EOS alignment: tokenizer.eos_token=%r eos_id=%r training_args.eos_token=%r",
+        tokenizer.eos_token,
+        tokenizer.eos_token_id,
+        getattr(training_args, "eos_token", None),
+    )
 
     # 5. Build custom evaluation callback
     eval_callback = WaypointEvalCallback(
