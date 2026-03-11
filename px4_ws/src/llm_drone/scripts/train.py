@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+torch.cuda.set_per_process_memory_fraction(0.80, device=0)
 from datasets import Dataset
 from trl import SFTTrainer, SFTConfig
 from unsloth import FastLanguageModel
@@ -221,30 +222,6 @@ cfg = TrainConfig()
 SYSTEM_PROMPT = load_system_prompt(DATASET_PROMPT_FILENAME)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 4: DATA LOADING AND VALIDATION
-#
-# WHY VALIDATE DATA BEFORE TRAINING?
-# A single malformed training example (invalid JSON label, NaN coordinate,
-# truncated output) can silently degrade the entire fine-tune.
-# The model will spend gradient steps learning to reproduce corrupt outputs.
-# Catching this here saves hours of wasted training.
-#
-# EXPECTED INPUT FORMAT (motion_planning_data.jsonl):
-# Each line is a JSON object with two fields:
-#
-# {
-#   "prompt": "Current position NED is (-0.14, 0.31, -2.43) m. Goal...",
-#   "completion": "{\"waypoints\": [{\"x\": 1.2, \"y\": 0.0, \"z\": -2.43}, ...], ...}"
-# }
-#
-# OR in messages format (preferred):
-# {
-#   "messages": [
-#     {"role": "user", "content": "Current position NED is..."},
-#     {"role": "assistant", "content": "{\"waypoints\": [...]}"}
-#   ]
-# }
 # ─────────────────────────────────────────────────────────────────────────────
 
 def validate_completion(completion_str: str) -> bool:

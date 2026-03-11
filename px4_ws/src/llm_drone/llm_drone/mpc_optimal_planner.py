@@ -56,10 +56,10 @@ from px4_msgs.msg import TrajectorySetpoint, VehicleOdometry, OffboardControlMod
 # MPC PARAMETERS  (tune these)
 # ─────────────────────────────────────────────────────────────────────────────
 Ts          = 0.1         # sampling time [s]
-T_horizon   = 50         # MPC prediction horizon [steps]
-V_MAX       = 2.0         # per-axis max commanded velocity [m/s]
-A_MAX       = 1.5         # per-axis max commanded acceleration [m/s^2]
-N_OBS       = 1            # nearest-point method: N=1 (Section III-A)
+T_horizon   = 20         # MPC prediction horizon [steps]
+V_MAX       = 10.0        # per-axis max commanded velocity [m/s]
+A_MAX       = 8.0         # per-axis max commanded acceleration [m/s^2]
+N_OBS       = 1          # nearest-point method: N=1 (Section III-A)
 Q_diag      = np.array([20.0, 20.0, 20.0, 1, 1, 1])   # tracking weight Q
 SCP_MAX_OUTER_ITERS = 4    # sequential convexification iterations per MPC cycle
 SCP_INNER_ITERS = 6        # projected-gradient iterations per convex sub-problem
@@ -73,7 +73,7 @@ SCP_BETA_GROW = 1.1        # trust-region growth factor after accepted step
 SCP_BETA_SHRINK = 0.5      # trust-region shrink factor after rejected step
 TRUST_POS0   = 1.0         # initial trust region on position trajectory [m]
 TRUST_U0     = 1.0         # initial tust region on velocity command [m/s]
-MIN_CLEARANCE = 0.5      # desired clearance [m] from nearest obstacle point
+MIN_CLEARANCE = 1.5    # desired clearance [m] from nearest obstacle point
 # OakD-Lite StereoOV7251 depth sensor from PX4 Gazebo SDF:
 #   x500_depth mount + OakD-Lite/model.sdf (horizontal_fov=1.274 rad, 640x480,
 #   near=0.2 m, far=19.1 m). Vertical FOV is derived from aspect ratio.
@@ -86,9 +86,15 @@ FIFO_LEN    = 200          # local obstacle map FIFO size (Section III-B)
 SETPOINT_LOG_EVERY_N = 10  # print MPC/PX4 setpoint debug every N control ticks
 DEBUG_PLOT_ENABLED = True  # non-blocking 2D MPC debug plots (optional)
 DEBUG_ENABLE_DEPTH_CAMERA = True  # non-blocking 2D MPC debug plots (optional)
-DEBUG_PLOT_RATE_HZ = 4.0   # plot refresh rate, decoupled from MPC loop
+DEBUG_PLOT_RATE_HZ = 5.0   # plot refresh rate, decoupled from MPC loop
 DEBUG_PLOT_OBS_MAX = 200   # max local obstacle points shown in debug plot
 DEBUG_PATH_HISTORY_LEN = 300
+DEPTH_FILTER_MIN_FORWARD_M = 0.35
+DEPTH_FILTER_MAX_FORWARD_M = 12.0
+DEPTH_FILTER_MAX_LATERAL_M = 4.0
+DEPTH_FILTER_MIN_BELOW_BODY_M = -0.25
+DEPTH_FILTER_MAX_BELOW_BODY_M = 2.5
+DEPTH_FILTER_FLOOR_CLEARANCE_M = 0.20
 MPC_LABEL_WAYPOINT_COUNT = 5  # publish next 5 waypoints from final solved X_opt for dataset labels
 USE_VELOCITY_ONLY_SETPOINT = True  # publish velocity setpoints as primary NED command
 LOCAL_PREDICTION_SEQUENCE_TOPIC = '/mpc/local_prediction_sequence'
@@ -105,7 +111,6 @@ DELAY_COMPENSATION_SEC = 0.15      # forward-prediction horizon for delay compen
 DEFAULT_MPC_SOLVER_BACKEND = 'python'
 DEFAULT_ENABLE_DEPTH_CAMERA = True
 DEFAULT_OBSTACLE_CONSTRAINTS_DISABLED = False
-DEFAULT_HOLD_DURING_SOLVE = False
 # Target heading: Gazebo +X (ENU East). Converted to NED yaw reference:
 # yaw_ned = pi/2 - yaw_enu, with yaw_enu(+X)=0 => yaw_ned=+pi/2.
 YAW_TARGET_RAD = np.pi / 2.0       # terminal yaw target in NED [rad]
@@ -164,6 +169,15 @@ class LocalObstacleMap:
         dists = norm(pts - x_ref[None, :3], axis=1)
         return pts[np.argmin(dists)]
 
+    def nearest_k(self, x_ref: np.ndarray, k: int) -> np.ndarray:
+        """Return up to k nearest obstacle points to x_ref, sorted nearest-first."""
+        if not self._buf or k <= 0:
+            return np.zeros((0, 3), dtype=float)
+        pts = np.array(self._buf, dtype=float)
+        dists = norm(pts - np.asarray(x_ref, dtype=float)[None, :3], axis=1)
+        order = np.argsort(dists)[:int(k)]
+        return pts[order]
+
     def clear(self):
         self._buf.clear()
 
@@ -181,8 +195,8 @@ class MPCDebugPlotter2D:
     """
     Optional async matplotlib plotter for MPC debug views.
 
-    Rendering is triggered by a separate ROS timer callback (main thread), so
-    the MPC control timer only publishes lightweight snapshots.
+    Rendering is triggered by a lightweight ROS timer callback on the main
+    thread so matplotlib GUI handling remains reliable.
     """
 
     def __init__(self,
@@ -274,7 +288,7 @@ class MPCDebugPlotter2D:
         x0_pos = np.array(x0[:3], dtype=float, copy=True)
         x_ref_pos = np.array(x_ref[:3], dtype=float, copy=True)
         x_pred = np.array(X_opt[:, :3], dtype=float, copy=True)
-        x_min_copy = None if x_min is None else np.array(x_min[:3], dtype=float, copy=True)
+        x_min_copy = None if x_min is None else np.array(x_min, dtype=float, copy=True)
         obs_copy = None
         if obs_pts is not None:
             obs_copy = np.array(obs_pts[:, :3], dtype=float, copy=True)
@@ -294,10 +308,8 @@ class MPCDebugPlotter2D:
         }
 
     def draw_latest(self) -> None:
-        """Render the latest snapshot (call from main thread / ROS timer)."""
-        if not self._enabled:
-            return
-        if self._latest is None:
+        """Render the latest snapshot on the main thread."""
+        if not self._enabled or self._latest is None:
             return
         try:
             snap = self._latest.copy()
@@ -337,8 +349,9 @@ class MPCDebugPlotter2D:
         self._artists['cur_xy'].set_data([x0[0]], [x0[1]])
         self._artists['goal_xy'].set_data([x_ref[0]], [x_ref[1]])
         self._artists['path_xy'].set_data(path_n, path_e)
-        if x_min is not None:
-            self._artists['nearest_xy'].set_data([x_min[0]], [x_min[1]])
+        if x_min is not None and np.size(x_min) > 0:
+            x_min_2d = np.atleast_2d(x_min)
+            self._artists['nearest_xy'].set_data(x_min_2d[:, 0], x_min_2d[:, 1])
         else:
             self._artists['nearest_xy'].set_data([], [])
 
@@ -351,8 +364,9 @@ class MPCDebugPlotter2D:
         self._artists['cur_xz'].set_data([x0[0]], [x0[2]])
         self._artists['goal_xz'].set_data([x_ref[0]], [x_ref[2]])
         self._artists['path_xz'].set_data(path_n, path_d)
-        if x_min is not None:
-            self._artists['nearest_xz'].set_data([x_min[0]], [x_min[2]])
+        if x_min is not None and np.size(x_min) > 0:
+            x_min_2d = np.atleast_2d(x_min)
+            self._artists['nearest_xz'].set_data(x_min_2d[:, 0], x_min_2d[:, 2])
         else:
             self._artists['nearest_xz'].set_data([], [])
 
@@ -472,6 +486,21 @@ class MPCPlanner:
     def _sum_abs(v: np.ndarray) -> float:
         return float(np.sum(np.abs(v)))
 
+    @staticmethod
+    def _normalize_x_obs(x_obs: np.ndarray | None) -> np.ndarray | None:
+        if x_obs is None:
+            return None
+        arr = np.asarray(x_obs, dtype=float)
+        if arr.size == 0:
+            return None
+        if arr.ndim == 1:
+            if arr.shape[0] != 2:
+                raise ValueError(f'Expected x_obs shape (2,), got {arr.shape}')
+            return arr[None, :]
+        if arr.ndim == 2 and arr.shape[1] == 2:
+            return arr
+        raise ValueError(f'Expected x_obs shape (K,2), got {arr.shape}')
+
     def _phi_real(
         self,
         X: np.ndarray,
@@ -480,6 +509,7 @@ class MPCPlanner:
         x_obs: np.ndarray | None,
     ) -> float:
         """MATLAB-like phi(X,U): objective + lambda*(eq violations + ineq violations)."""
+        x_obs = self._normalize_x_obs(x_obs)
         eqns = 0.0
         eqns += self._sum_abs(X[-1, :2] - x_ref[:2])
         eqns += self._sum_abs(X[-1, 2:4] - x_ref[2:4])
@@ -489,8 +519,8 @@ class MPCPlanner:
 
         ineq_obs = 0.0
         if x_obs is not None:
-            d = X[1:, :2] - x_obs[None, :]
-            dist = np.linalg.norm(d, axis=1)
+            d = X[1:, None, :2] - x_obs[None, :, :]
+            dist = np.linalg.norm(d, axis=2)
             ineq_obs = float(np.sum(self._hinge(MIN_CLEARANCE - dist)))
 
         obj = float(Ts * np.sum(U * U))
@@ -508,6 +538,7 @@ class MPCPlanner:
         l_u: float,
     ) -> float:
         """MATLAB-like convexified phi_hat(X,U) around (X_now,U_now)."""
+        x_obs = self._normalize_x_obs(x_obs)
         eqns = 0.0
         eqns += self._sum_abs(X[-1, :2] - x_ref[:2])
         eqns += self._sum_abs(X[-1, 2:4] - x_ref[2:4])
@@ -519,10 +550,10 @@ class MPCPlanner:
 
         ineq_obs = 0.0
         if x_obs is not None:
-            d_now = X_now[1:, :2] - x_obs[None, :]
-            d_now_norm = np.linalg.norm(d_now, axis=1)
-            d = X[1:, :2] - x_obs[None, :]
-            lin_obs = MIN_CLEARANCE * d_now_norm - np.sum(d_now * d, axis=1)
+            d_now = X_now[1:, None, :2] - x_obs[None, :, :]
+            d_now_norm = np.linalg.norm(d_now, axis=2)
+            d = X[1:, None, :2] - x_obs[None, :, :]
+            lin_obs = MIN_CLEARANCE * d_now_norm - np.sum(d_now * d, axis=2)
             ineq_obs = float(np.sum(self._hinge(lin_obs)))
 
         obj = float(Ts * np.sum(U * U))
@@ -544,6 +575,7 @@ class MPCPlanner:
         Subgradient of convexified objective wrt controls.
         Returns (grad, X(U)).
         """
+        x_obs = self._normalize_x_obs(x_obs)
         X = self._rollout(x0, U)
         grad = 2.0 * Ts * U
 
@@ -594,25 +626,26 @@ class MPCPlanner:
 
         # convexified obstacle constraint
         if x_obs is not None:
-            d_now = X_now[1:, :2] - x_obs[None, :]
-            d_now_norm = np.linalg.norm(d_now, axis=1)
-            d = X[1:, :2] - x_obs[None, :]
-            lin_obs = MIN_CLEARANCE * d_now_norm - np.sum(d_now * d, axis=1)
+            d_now = X_now[1:, None, :2] - x_obs[None, :, :]
+            d_now_norm = np.linalg.norm(d_now, axis=2)
+            d = X[1:, None, :2] - x_obs[None, :, :]
+            lin_obs = MIN_CLEARANCE * d_now_norm - np.sum(d_now * d, axis=2)
             for k in range(T_horizon):
-                if lin_obs[k] <= 0.0:
-                    continue
-                g_x = -d_now[k]
-                # x_{k+1} depends on accelerations a_0..a_{k-1}
-                for j in range(k):
-                    weight = Ts * Ts * float(k - j)
-                    grad[j, :2] += SCP_LAMBDA * weight * g_x
+                for obs_idx in range(x_obs.shape[0]):
+                    if lin_obs[k, obs_idx] <= 0.0:
+                        continue
+                    g_x = -d_now[k, obs_idx]
+                    # x_{k+1} depends on accelerations a_0..a_{k-1}
+                    for j in range(k):
+                        weight = Ts * Ts * float(k - j)
+                        grad[j, :2] += SCP_LAMBDA * weight * g_x
 
         return grad, X
 
     def solve(self,
               x0: np.ndarray,
               x_ref: np.ndarray,
-              x_min: np.ndarray | None,
+              x_obs: np.ndarray | None,
               U_warm: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Run sequential convex optimisation with penalty constraints.
@@ -621,7 +654,7 @@ class MPCPlanner:
         ----------
         x0      : (4,) current planning state [x, y, vx, vy]
         x_ref   : (4,) desired terminal state [x, y, vx, vy]
-        x_min   : (2,) nearest obstacle position in XY, or None
+        x_obs   : (K, 2) nearest obstacle positions in XY, or None
         U_warm  : (T, 2) warm-start control sequence [ax, ay]
 
         Returns
@@ -630,10 +663,13 @@ class MPCPlanner:
         X_opt   : (T+1, 4) optimised state trajectory
         """
         if self.backend_name == 'cpp_osqp':
+            native_x_obs = None if x_obs is None else np.asarray(x_obs, dtype=float)
+            if native_x_obs is not None and native_x_obs.ndim == 2:
+                native_x_obs = native_x_obs[0]
             U_opt, X_opt, solver_status = solve_native_osqp(
                 x0=x0,
                 x_ref=x_ref,
-                x_obs=x_min,
+                x_obs=native_x_obs,
                 u_warm=U_warm,
                 config=self._native_solver_config(),
             )
@@ -641,10 +677,13 @@ class MPCPlanner:
             return U_opt, X_opt
 
         if self.backend_name == 'cpp_subgradient':
+            native_x_obs = None if x_obs is None else np.asarray(x_obs, dtype=float)
+            if native_x_obs is not None and native_x_obs.ndim == 2:
+                native_x_obs = native_x_obs[0]
             U_opt, X_opt, solver_status = solve_native_subgradient(
                 x0=x0,
                 x_ref=x_ref,
-                x_obs=x_min,
+                x_obs=native_x_obs,
                 u_warm=U_warm,
                 config=self._native_solver_config(),
             )
@@ -662,7 +701,7 @@ class MPCPlanner:
             U_candidate = self._solve_convex_subproblem(
                 x0=x0,
                 x_ref=x_ref,
-                x_obs=x_min,
+                x_obs=x_obs,
                 X_now=X_now,
                 U_now=U_now,
                 l_pos=l_pos,
@@ -677,7 +716,7 @@ class MPCPlanner:
                         x0=x0,
                         U=U_candidate,
                         x_ref=x_ref,
-                        x_obs=x_min,
+                        x_obs=x_obs,
                         X_now=X_now,
                         U_now=U_now,
                         l_pos=l_pos,
@@ -688,18 +727,18 @@ class MPCPlanner:
 
             X_candidate = self._rollout(x0, U_candidate)
 
-            phi_real_now = self._phi_real(X_now, U_now, x_ref, x_min)
+            phi_real_now = self._phi_real(X_now, U_now, x_ref, x_obs)
             phi_hat_new = self._phi_hat(
                 X=X_candidate,
                 U=U_candidate,
                 x_ref=x_ref,
-                x_obs=x_min,
+                x_obs=x_obs,
                 X_now=X_now,
                 U_now=U_now,
                 l_pos=l_pos,
                 l_u=l_u,
             )
-            phi_real_new = self._phi_real(X_candidate, U_candidate, x_ref, x_min)
+            phi_real_new = self._phi_real(X_candidate, U_candidate, x_ref, x_obs)
 
             delta_hat = phi_real_now - phi_hat_new
             delta = phi_real_now - phi_real_new
@@ -739,6 +778,7 @@ class MPCPlanner:
         if cp is None:
             self.last_solver_status = 'no_cvxpy'
             return None
+        x_obs = self._normalize_x_obs(x_obs)
 
         U = cp.Variable((T_horizon, 2))
         X_pos = cp.Variable((T_horizon + 1, 2))
@@ -764,13 +804,15 @@ class MPCPlanner:
 
         ineq_obs = 0.0
         if x_obs is not None:
-            d_now = X_now[1:, :2] - x_obs[None, :]
-            d_now_norm = np.linalg.norm(d_now, axis=1)
-            lin_obs = (
-                MIN_CLEARANCE * d_now_norm
-                - cp.sum(cp.multiply(d_now, X_pos[1:, :] - x_obs[None, :]), axis=1)
-            )
-            ineq_obs = cp.sum(cp.pos(lin_obs))
+            for obs_idx in range(x_obs.shape[0]):
+                obs_xy = x_obs[obs_idx]
+                d_now = X_now[1:, :2] - obs_xy[None, :]
+                d_now_norm = np.linalg.norm(d_now, axis=1)
+                lin_obs = (
+                    MIN_CLEARANCE * d_now_norm
+                    - cp.sum(cp.multiply(d_now, X_pos[1:, :] - obs_xy[None, :]), axis=1)
+                )
+                ineq_obs += cp.sum(cp.pos(lin_obs))
 
         objective = cp.Minimize(
             Ts * cp.sum_squares(U)
@@ -864,6 +906,33 @@ class DepthToObstacles:
         # apply the same camera->body transform used by mpc_vision_controller.
         pts_cam = np.column_stack([Xc, Yc, Zc])
         return (self.rotation_body_camera @ pts_cam.T).T + self.translation_body_camera_m
+
+    def filter_body_points(self, pts_body: np.ndarray) -> np.ndarray:
+        """Remove near-body, floor-like, and far outlier points before NED projection."""
+        if pts_body.shape[0] == 0:
+            return np.zeros((0, 3))
+
+        pts = np.asarray(pts_body, dtype=float)
+        forward = pts[:, 0]
+        lateral = pts[:, 1]
+        down = pts[:, 2]
+
+        mask = np.isfinite(pts).all(axis=1)
+        mask &= forward >= DEPTH_FILTER_MIN_FORWARD_M
+        mask &= forward <= DEPTH_FILTER_MAX_FORWARD_M
+        mask &= np.abs(lateral) <= DEPTH_FILTER_MAX_LATERAL_M
+        mask &= down >= DEPTH_FILTER_MIN_BELOW_BODY_M
+        mask &= down <= DEPTH_FILTER_MAX_BELOW_BODY_M
+
+        # Reject points too close to the ground plane when the camera is above ground.
+        camera_height_above_ground_m = max(0.0, -float(self.translation_body_camera_m[2]))
+        if camera_height_above_ground_m > DEPTH_FILTER_FLOOR_CLEARANCE_M:
+            mask &= down <= camera_height_above_ground_m - DEPTH_FILTER_FLOOR_CLEARANCE_M
+
+        filtered = pts[mask]
+        if filtered.shape[0] == 0:
+            return np.zeros((0, 3))
+        return filtered
 
     def body_to_spatial(self,
                          pts_body: np.ndarray,
@@ -999,7 +1068,6 @@ class MPCUAVNode(Node):
         self.declare_parameter('goal_reached_yaw_threshold_rad', GOAL_REACHED_YAW_THRESHOLD_RAD)
         self.declare_parameter('enable_delay_compensation', ENABLE_DELAY_COMPENSATION)
         self.declare_parameter('delay_compensation_sec', DELAY_COMPENSATION_SEC)
-        self.declare_parameter('hold_during_solve', DEFAULT_HOLD_DURING_SOLVE)
 
         # ── MPC timer (10 Hz matches paper) ─────────────────────────────────
         self.create_timer(Ts, self._mpc_step)
@@ -1012,11 +1080,6 @@ class MPCUAVNode(Node):
                 'enable_depth_camera=False: depth subscription is disabled, so the obstacle map '
                 'will remain empty and MPC will run without depth-based obstacle avoidance. '
                 'Restart with --ros-args -p enable_depth_camera:=true to restore depth input.'
-            )
-        if bool(self.get_parameter('hold_during_solve').value):
-            self.get_logger().warn(
-                'hold_during_solve is ignored: the planner now preserves the last fresh MPC command '
-                'while the next solve runs asynchronously.'
             )
 
         self.get_logger().info(f'Using MPC solver backend: {self._mpc.backend_name}')
@@ -1087,6 +1150,7 @@ class MPCUAVNode(Node):
 
         # ── Step 1: pixel → body-frame 3D points  (Eq.5, Eq.6) ────────────
         pts_body = self._depth2obs.depth_to_body_frame(depth)
+        pts_body = self._depth2obs.filter_body_points(pts_body)
 
         # ── Step 2: body frame → NED spatial frame  (Eq.7) ─────────────────
         pts_ned = self._depth2obs.body_to_spatial(
@@ -1154,11 +1218,13 @@ class MPCUAVNode(Node):
             self._warned_delay_compensation_enabled = False
 
         x0_plan = np.array([x0[0], x0[1], x0[3], x0[4]], dtype=float)
-        x_min = self._obs_map.nearest(x0[:3])
-        x_min_plan = None if x_min is None else np.array([x_min[0], x_min[1]], dtype=float)
+        x_min_debug = self._obs_map.nearest_k(x0[:3], N_OBS)
+        x_min = None if x_min_debug.shape[0] == 0 else np.array(x_min_debug[0], dtype=float, copy=True)
+        x_obs_plan = None if x_min_debug.shape[0] == 0 else np.array(x_min_debug[:, :2], dtype=float, copy=True)
         if bool(self.get_parameter('disable_obstacle_constraints').value):
             x_min = None
-            x_min_plan = None
+            x_min_debug = np.zeros((0, 3), dtype=float)
+            x_obs_plan = None
             if not self._warned_obstacle_constraints_disabled:
                 self.get_logger().warn(
                     'Obstacle constraints disabled: MPC is running goal-tracking only.'
@@ -1176,9 +1242,10 @@ class MPCUAVNode(Node):
             'u_warm': self._U_warm.copy(),
             'x0': x0,
             'x0_meas': x0_meas,
+            'x_min_debug': x_min_debug,
             'x0_plan': x0_plan,
             'x_min': x_min,
-            'x_min_plan': x_min_plan,
+            'x_obs_plan': x_obs_plan,
             'x_ref_log': x_ref_log,
             'x_ref_plan': x_ref_plan,
             'z_err': z_err,
@@ -1190,7 +1257,7 @@ class MPCUAVNode(Node):
         U_opt, X_opt_plan = self._mpc.solve(
             request['x0_plan'],
             request['x_ref_plan'],
-            request['x_min_plan'],
+            request['x_obs_plan'],
             request['u_warm'],
         )
         solve_duration_sec = time.monotonic() - solve_start
@@ -1249,6 +1316,7 @@ class MPCUAVNode(Node):
             'u_cmd': u_cmd,
             'x0': request['x0'],
             'x_min': request['x_min'],
+            'x_min_debug': request['x_min_debug'],
             'x_ref_log': request['x_ref_log'],
             'z_err': request['z_err'],
         }
@@ -1318,7 +1386,7 @@ class MPCUAVNode(Node):
             x0=result['x0'],
             x_ref=np.array([self._goal_ned[0], self._goal_ned[1], self._goal_ned[2]], dtype=float),
             X_opt=result['X_opt_plot'],
-            x_min=result['x_min'],
+            x_min=result['x_min_debug'],
             obs_pts=result['obs_snapshot'],
             goal_reached=bool(result['goal_reached']),
             dist_goal=float(result['dist_goal_xy']),
@@ -1334,7 +1402,7 @@ class MPCUAVNode(Node):
             f'yaw={result["x0"][6]:.2f} rad yaw_rate_cmd={self._last_u_cmd_ned[3]:.2f} rad/s')
 
     def _debug_plot_step(self) -> None:
-        """Separate timer loop for debug plotting (main thread-safe)."""
+        """Drive visible matplotlib updates from the main thread at a low rate."""
         self._debug_plotter.draw_latest()
 
     @staticmethod
@@ -1542,6 +1610,11 @@ class MPCUAVNode(Node):
         setpoint_rate_txt = 'n/a' if setpoint_rate_hz is None else f'{setpoint_rate_hz:.1f}'
         offboard_rate_txt = 'n/a' if offboard_rate_hz is None else f'{offboard_rate_hz:.1f}'
         solve_ms_txt = 'n/a' if solve_ms is None else f'{solve_ms:.0f}'
+        obs_snapshot = self._obs_map.snapshot(DEBUG_PLOT_OBS_MAX)
+        obs_count = int(obs_snapshot.shape[0]) if obs_snapshot.ndim == 2 else 0
+        nearest_obs = self._obs_map.nearest(x_cur[:3])
+        nearest_obs_dist = float(norm(nearest_obs - x_cur[:3])) if nearest_obs is not None else float('inf')
+        nearest_obs_txt = 'n/a' if not np.isfinite(nearest_obs_dist) else f'{nearest_obs_dist:.2f}'
         self.get_logger().info(
             f'current=[{x_cur[0]:.2f},{x_cur[1]:.2f},{x_cur[2]:.2f},{yaw_cur:.2f}] '
             f'vel_odom=[{vel_odom[0]:.2f},{vel_odom[1]:.2f},{vel_odom[2]:.2f}] '
@@ -1549,7 +1622,8 @@ class MPCUAVNode(Node):
             f'goal=[{x_goal[0]:.2f},{x_goal[1]:.2f},{x_goal[2]:.2f},{yaw_goal:.2f}] '
             f'Error=[{pos_err_vec[0]:.2f},{pos_err_vec[1]:.2f},{pos_err_vec[2]:.2f},{yaw_err:.2f}] '
             f'ror_norm={pos_err:.2f} Solver result={solver_status} '
-            f'sp_rate={setpoint_rate_txt}Hz offboard_rate={offboard_rate_txt}Hz solve_ms={solve_ms_txt}'
+            f'sp_rate={setpoint_rate_txt}Hz offboard_rate={offboard_rate_txt}Hz solve_ms={solve_ms_txt} '
+            f'obs_count={obs_count} nearest_obs={nearest_obs_txt}m'
         )
 
     @staticmethod

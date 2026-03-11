@@ -54,6 +54,12 @@ FRESH_COMMITTED_WAYPOINT_TOPIC = '/mpc/committed_waypoint_fresh'
 EXECUTED_COMMITTED_WAYPOINT_TOPIC = '/mpc/committed_waypoint_executed'
 LABEL_MODE_LOCAL_PREDICTION = 'local_mpc_prediction_window'
 LABEL_MODE_EXECUTED = 'executed_committed_waypoint_window'
+DEPTH_FILTER_MIN_FORWARD_M = 0.35
+DEPTH_FILTER_MAX_FORWARD_M = 12.0
+DEPTH_FILTER_MAX_LATERAL_M = 4.0
+DEPTH_FILTER_MIN_BELOW_BODY_M = -0.25
+DEPTH_FILTER_MAX_BELOW_BODY_M = 2.5
+DEPTH_FILTER_FLOOR_CLEARANCE_M = 0.20
 
 
 class LocalObstacleMap:
@@ -125,6 +131,31 @@ class DepthToObstacles:
         zc = depths
         pts_cam = np.column_stack([xc, yc, zc])
         return (self.rotation_body_camera @ pts_cam.T).T + self.translation_body_camera_m
+
+    def filter_body_points(self, pts_body: np.ndarray) -> np.ndarray:
+        if pts_body is None or pts_body.shape[0] == 0:
+            return np.zeros((0, 3), dtype=float)
+
+        pts = np.asarray(pts_body, dtype=float)
+        forward = pts[:, 0]
+        lateral = pts[:, 1]
+        down = pts[:, 2]
+
+        mask = np.isfinite(pts).all(axis=1)
+        mask &= forward >= DEPTH_FILTER_MIN_FORWARD_M
+        mask &= forward <= DEPTH_FILTER_MAX_FORWARD_M
+        mask &= np.abs(lateral) <= DEPTH_FILTER_MAX_LATERAL_M
+        mask &= down >= DEPTH_FILTER_MIN_BELOW_BODY_M
+        mask &= down <= DEPTH_FILTER_MAX_BELOW_BODY_M
+
+        camera_height_above_ground_m = max(0.0, -float(self.translation_body_camera_m[2]))
+        if camera_height_above_ground_m > DEPTH_FILTER_FLOOR_CLEARANCE_M:
+            mask &= down <= camera_height_above_ground_m - DEPTH_FILTER_FLOOR_CLEARANCE_M
+
+        filtered = pts[mask]
+        if filtered.shape[0] == 0:
+            return np.zeros((0, 3), dtype=float)
+        return filtered
 
     @staticmethod
     def body_to_spatial(pts_body: np.ndarray, rotation_ned_body: np.ndarray, pos_ned: np.ndarray) -> np.ndarray:
@@ -373,6 +404,7 @@ class SyncDatasetGenerator(Node):
             return
 
         pts_body = self.depth_to_obstacles.depth_to_body_frame(depth_image)
+        pts_body = self.depth_to_obstacles.filter_body_points(pts_body)
         pts_ned = self.depth_to_obstacles.body_to_spatial(
             pts_body,
             odom['rotation_ned_body'],
