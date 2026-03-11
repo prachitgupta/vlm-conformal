@@ -1,0 +1,846 @@
+# =============================================================================
+# DRONE MOTION PLANNER — LLM FINE-TUNING SCRIPT
+# Model  : Qwen2.5-7B-Instruct
+# Method : LoRA (bf16, no quantization) — optimized for 2x NVIDIA L40S (46 GB each)
+# Task   : NL sensor prompt → JSON waypoints (5-point local trajectory)
+# =============================================================================
+#
+# QUICK START:
+#   pip install unsloth trl datasets transformers accelerate peft
+#   python train_motion_planner.py
+#
+# For dual-GPU FSDP (uses both L40S cards):
+#   accelerate config   (choose: multi-GPU, FSDP, bf16)
+#   accelerate launch train_motion_planner.py
+# =============================================================================
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 1: IMPORTS
+#
+# WHY THESE LIBRARIES?
+#
+# unsloth        — Drop-in replacement for HuggingFace model loading.
+#                  Provides custom CUDA kernels that make LoRA training
+#                  2-5x faster than vanilla transformers. Critical for
+#                  long-sequence tasks like yours (1200+ token prompts).
+#
+# trl / SFTTrainer — "Transformer Reinforcement Learning" library by HuggingFace.
+#                  SFTTrainer is a wrapper around the standard Trainer that
+#                  adds two things critical for your task:
+#                  (1) Automatic chat template application (converts your
+#                      messages dicts to the correct Qwen2.5 format).
+#                  (2) Loss masking — the model only trains to predict the
+#                      ASSISTANT turn (waypoints), not to re-predict your
+#                      input prompt. Without this, the model wastes capacity
+#                      memorizing the sensor data instead of learning to
+#                      generate good trajectories.
+#
+# datasets       — HuggingFace datasets library. Handles efficient batching,
+#                  tokenization caching, and data collation.
+#
+# peft / LoraConfig — Parameter-Efficient Fine-Tuning. Implements the LoRA
+#                  adapter injection into the model's attention layers.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import csv
+import json
+import os
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+import torch
+from datasets import Dataset
+from trl import SFTTrainer, SFTConfig
+from unsloth import FastLanguageModel
+
+try:
+    from llm_drone.llm_prompt_common import DATASET_PROMPT_FILENAME, load_system_prompt
+except ImportError:
+    DATASET_PROMPT_FILENAME = "llm_prompt.txt"
+
+    def load_system_prompt(prompt_filename: str) -> str:
+        prompt_path = (Path(__file__).resolve().parents[1] / "config" / prompt_filename).resolve()
+        return prompt_path.read_text() if prompt_path.exists() else ""
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%H:%M:%S"
+)
+log = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2: CONFIGURATION
+#
+# WHY CENTRALIZE CONFIG HERE?
+# All hyperparameters in one place so you can tune without hunting through code.
+# Each value is explained with the reasoning specific to YOUR task.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class TrainConfig:
+
+    # --- Model ---
+    model_name: str = "Qwen/Qwen2.5-7B-Instruct"
+    # WHY 7B: Your prompts are physically complex (NED frame, obstacle sectors,
+    # velocity vectors). 7B has enough capacity to learn the spatial reasoning
+    # required. 3B often fails on edge cases with multiple simultaneous obstacles.
+    # WHY Qwen2.5: Best-in-class structured/JSON output among open models.
+    # Qwen2.5 was explicitly trained on code and structured data, which means
+    # it already "knows" how to write valid JSON — you're just redirecting that.
+
+    load_in_4bit: bool = False
+    # WHY FALSE: You have 46 GB VRAM per L40S. 4-bit quantization (QLoRA)
+    # exists to fit models on 16-24 GB consumer GPUs. It slightly degrades
+    # quality. With your hardware, use full bf16 LoRA for best results.
+    # Set to True only if you're running other jobs simultaneously and VRAM is tight.
+
+    max_seq_length: int = 2048
+    # WHY 2048: Your system prompt (~500 tokens) + sensor data prompt (~700 tokens)
+    # + JSON output (~300 tokens) = ~1500 tokens. 2048 gives comfortable headroom.
+    # Do NOT set this lower or long prompts will be silently truncated, causing
+    # the model to train on incomplete inputs and produce garbage waypoints.
+
+    # --- LoRA Adapter Config ---
+    lora_r: int = 32
+    # WHY 32: LoRA rank controls how many parameters are trainable.
+    # rank=16 is a starting point; rank=32 gives more expressive power.
+    # Your task requires learning precise floating-point coordinate generation
+    # conditioned on continuous sensor values — higher rank helps here.
+    # rank=64 is diminishing returns unless you have >20K examples.
+
+    lora_alpha: int = 64
+    # WHY 64 (= 2 * rank): Alpha is a scaling factor. The effective learning
+    # rate of the adapter is (alpha / rank). Keeping alpha = 2*rank is the
+    # standard convention — it means the adapter's updates are scaled by 2,
+    # which helps with convergence speed without instability.
+
+    lora_dropout: float = 0.05
+    # WHY 0.05: Light dropout on the adapter weights. Prevents the adapters
+    # from over-specializing to your training prompts at the expense of
+    # generalization to new sensor configurations you haven't seen.
+
+    target_modules: list = field(default_factory=lambda: [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj"
+    ])
+    # WHY THESE LAYERS: These are all the linear projection layers in
+    # Qwen2.5's transformer blocks. Applying LoRA to all of them (not just
+    # q and v as some tutorials suggest) gives significantly better results
+    # for structured output tasks. The gate/up/down projections in the MLP
+    # are particularly important for learning the precise numeric patterns
+    # in your waypoint coordinates.
+
+    # --- Data ---
+    data_path: str = str((Path(__file__).resolve().parents[1] / "dataset" / "dataset.csv"))
+    # Supported inputs:
+    # - raw dataset.csv from dataset_generator_sync.py
+    # - JSONL with {"prompt","completion"} rows
+    # - JSONL with {"messages":[...]} rows
+
+    val_split_ratio: float = 0.1
+    # WHY 10%: Standard train/val split. With 5K examples this gives 500
+    # validation examples — enough for stable eval loss measurement.
+
+    # --- Training ---
+    output_dir: str = "./drone_planner_checkpoints"
+
+    num_train_epochs: int = 3
+    # WHY 3: For fine-tuning, 1-3 epochs is almost always correct.
+    # More than 3 usually causes overfitting — the model starts memorizing
+    # your specific training prompts rather than learning the underlying
+    # sensor-to-waypoint mapping. Watch your validation loss: if it starts
+    # rising while training loss falls, stop early.
+
+    per_device_train_batch_size: int = 4
+    # WHY 4: With a 7B model in bf16, each sample uses ~6-8 GB VRAM for
+    # activations at seq_len=2048. Batch size 4 uses ~24-32 GB, well within
+    # your 46 GB per card. Larger batches = more stable gradient estimates.
+
+    gradient_accumulation_steps: int = 4
+    # WHY 4: Effective batch size = per_device * gradient_accumulation * num_GPUs
+    # = 4 * 4 * 2 = 32 (with both L40S cards).
+    # Larger effective batches reduce gradient noise, which matters for
+    # learning precise floating-point coordinate generation.
+
+    learning_rate: float = 1e-4
+    # WHY 1e-4: Standard LoRA learning rate. Lower than full fine-tuning
+    # (which uses 1e-5 to 1e-6) because LoRA adapters are small and need
+    # larger relative updates. If you see loss spikes, drop to 5e-5.
+    # If loss decreases too slowly, try 2e-4.
+
+    warmup_ratio: float = 0.05
+    # WHY 0.05: Gradually ramps learning rate from 0 to target over the first
+    # 5% of training steps. Prevents instability at the start when the adapter
+    # weights are randomly initialized and the gradient signal is noisy.
+
+    lr_scheduler_type: str = "cosine"
+    # WHY COSINE: Smoothly decays learning rate following a cosine curve.
+    # Better than linear decay for fine-tuning because the final 20% of
+    # training uses very small updates — good for polishing coordinate
+    # precision without overshooting.
+
+    bf16: bool = True
+    # WHY BF16: L40S (Ada Lovelace) has native bfloat16 tensor cores.
+    # BF16 has the same dynamic range as FP32 (important for coordinate
+    # values which can span -50m to +50m) but uses half the memory.
+    # Never use FP16 for this task — FP16 can overflow on large coordinate values.
+
+    # --- Logging & Saving ---
+    logging_steps: int = 10
+    eval_steps: int = 50
+    save_steps: int = 100
+    save_total_limit: int = 3
+    # Keep only last 3 checkpoints to avoid filling disk.
+
+    seed: int = 42
+
+
+cfg = TrainConfig()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 3: SYSTEM PROMPT
+#
+# WHY A DEDICATED SYSTEM PROMPT?
+# The system prompt is prepended to EVERY training example. It establishes:
+# (1) The model's role and the coordinate frame conventions (NED, meters).
+# (2) The output schema — the model learns that it must always produce
+#     exactly 5 waypoints in valid JSON.
+# (3) Safety constraints — these become "soft" constraints baked into
+#     the model's generation behavior through repeated exposure.
+#
+# KEEP THIS IDENTICAL between training and inference, or the model will
+# behave inconsistently at test time.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = load_system_prompt(DATASET_PROMPT_FILENAME)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 4: DATA LOADING AND VALIDATION
+#
+# WHY VALIDATE DATA BEFORE TRAINING?
+# A single malformed training example (invalid JSON label, NaN coordinate,
+# truncated output) can silently degrade the entire fine-tune.
+# The model will spend gradient steps learning to reproduce corrupt outputs.
+# Catching this here saves hours of wasted training.
+#
+# EXPECTED INPUT FORMAT (motion_planning_data.jsonl):
+# Each line is a JSON object with two fields:
+#
+# {
+#   "prompt": "Current position NED is (-0.14, 0.31, -2.43) m. Goal...",
+#   "completion": "{\"waypoints\": [{\"x\": 1.2, \"y\": 0.0, \"z\": -2.43}, ...], ...}"
+# }
+#
+# OR in messages format (preferred):
+# {
+#   "messages": [
+#     {"role": "user", "content": "Current position NED is..."},
+#     {"role": "assistant", "content": "{\"waypoints\": [...]}"}
+#   ]
+# }
+# ─────────────────────────────────────────────────────────────────────────────
+
+def validate_completion(completion_str: str) -> bool:
+    """
+    Validate that a completion string is valid JSON with the correct schema.
+    Returns True if valid, False if the example should be skipped.
+    """
+    try:
+        data = json.loads(completion_str)
+    except json.JSONDecodeError:
+        return False
+
+    if not isinstance(data, dict):
+        return False
+    if "waypoints" not in data:
+        return False
+
+    waypoints = data["waypoints"]
+    if not isinstance(waypoints, list):
+        return False
+
+    # Must have exactly 5 waypoints
+    if len(waypoints) != 5:
+        return False
+
+    selected_idx = data.get("selected_waypoint_index", 0)
+    if not isinstance(selected_idx, int):
+        return False
+    if selected_idx < 0 or selected_idx >= len(waypoints):
+        return False
+
+    # Each waypoint must have x, y, z as finite numbers
+    for wp in waypoints:
+        if not isinstance(wp, dict):
+            return False
+        for key in ["x", "y", "z"]:
+            if key not in wp:
+                return False
+            val = wp[key]
+            if not isinstance(val, (int, float)):
+                return False
+            if not torch.tensor(val).isfinite():
+                return False
+
+    reasoning = data.get("reasoning", None)
+    if reasoning is not None and not isinstance(reasoning, str):
+        return False
+
+    evaluation = data.get("evaluation", None)
+    if evaluation is not None and not isinstance(evaluation, dict):
+        return False
+
+    return True
+
+
+def normalize_completion_for_training(completion_str: str) -> str:
+    """
+    Keep the assistant target aligned with the prompt contract used at inference.
+    Reasoning is preserved; auxiliary evaluation metadata is dropped.
+    """
+    data = json.loads(completion_str)
+    normalized = {
+        "waypoints": data["waypoints"],
+        "selected_waypoint_index": int(data.get("selected_waypoint_index", 0)),
+        "reasoning": str(data.get("reasoning", "")).strip(),
+    }
+    return json.dumps(normalized, separators=(",", ":"))
+
+
+def extract_user_and_assistant_messages(messages: list[dict]) -> tuple[str | None, str | None]:
+    user_content = next((m.get("content") for m in messages if m.get("role") == "user"), None)
+    assistant_content = next((m.get("content") for m in messages if m.get("role") == "assistant"), None)
+    return user_content, assistant_content
+
+
+def iter_examples_from_jsonl(data_path: Path):
+    with data_path.open("r") as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            yield line_num, line
+
+
+def iter_examples_from_csv(data_path: Path):
+    with data_path.open("r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row_idx, row in enumerate(reader, start=2):
+            prompt = (row.get("prompt") or "").strip()
+            completion = (row.get("label_waypoints_json") or row.get("completion") or "").strip()
+            if not prompt or not completion:
+                yield row_idx, None
+                continue
+            yield row_idx, {"prompt": prompt, "completion": completion}
+
+
+def load_and_prepare_dataset(cfg: TrainConfig) -> tuple[Dataset, Dataset]:
+    """
+    Load raw dataset.csv or JSONL dataset, validate each example, convert to chat message format,
+    and split into train/val sets.
+    """
+    log.info(f"Loading dataset from {cfg.data_path}")
+    data_path = Path(cfg.data_path).expanduser().resolve()
+    if not data_path.exists():
+        raise FileNotFoundError(f"Dataset not found: {data_path}")
+
+    raw_examples = []
+    skipped = 0
+    iterator = iter_examples_from_csv(data_path) if data_path.suffix.lower() == ".csv" else iter_examples_from_jsonl(data_path)
+
+    for line_num, raw_example in iterator:
+        if raw_example is None:
+            log.warning(f"Row {line_num}: Missing prompt/completion columns, skipping.")
+            skipped += 1
+            continue
+
+        if isinstance(raw_example, str):
+            try:
+                example = json.loads(raw_example)
+            except json.JSONDecodeError:
+                log.warning(f"Line {line_num}: Invalid JSON, skipping.")
+                skipped += 1
+                continue
+        else:
+            example = raw_example
+
+        if "messages" in example:
+            user_content, assistant_content = extract_user_and_assistant_messages(example["messages"])
+        elif "prompt" in example and ("completion" in example or "label_waypoints_json" in example):
+            user_content = example["prompt"]
+            assistant_content = example.get("completion") or example.get("label_waypoints_json")
+        else:
+            log.warning(f"Line {line_num}: Missing required fields, skipping.")
+            skipped += 1
+            continue
+
+        if not isinstance(user_content, str) or not isinstance(assistant_content, str):
+            log.warning(f"Line {line_num}: Prompt/completion types are invalid, skipping.")
+            skipped += 1
+            continue
+
+        if not validate_completion(assistant_content):
+            log.warning(f"Line {line_num}: Invalid completion schema, skipping.")
+            skipped += 1
+            continue
+
+        assistant_content = normalize_completion_for_training(assistant_content)
+
+        raw_examples.append({
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": assistant_content},
+            ]
+        })
+
+    log.info(f"Loaded {len(raw_examples)} valid examples. Skipped {skipped} invalid.")
+
+    if len(raw_examples) == 0:
+        raise ValueError(
+            f"No valid examples found in {cfg.data_path}. "
+            "Check your data format — see SECTION 4 comments for expected schema."
+        )
+
+    # Shuffle and split
+    dataset = Dataset.from_list(raw_examples).shuffle(seed=cfg.seed)
+    split = dataset.train_test_split(test_size=cfg.val_split_ratio, seed=cfg.seed)
+
+    log.info(f"Train: {len(split['train'])} | Val: {len(split['test'])} examples")
+    return split["train"], split["test"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 5: MODEL LOADING
+#
+# WHY UNSLOTH INSTEAD OF VANILLA TRANSFORMERS?
+# For your task specifically, Unsloth matters because:
+# (1) Your prompts are long (~1200-1500 tokens). Unsloth's FlashAttention-2
+#     implementation scales O(n) instead of O(n²) in memory, meaning you can
+#     fit larger batches at your sequence length.
+# (2) Unsloth's custom LoRA backward pass is 30-40% faster than HuggingFace PEFT.
+# (3) It handles Qwen2.5's RoPE (rotary position embedding) scaling correctly
+#     out of the box — vanilla transformers sometimes needs manual patching.
+#
+# WHY NOT LOAD IN 4-BIT?
+# As discussed: 7B in bf16 = ~14 GB. You have 46 GB. Save the quality.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def load_model_and_tokenizer(cfg: TrainConfig):
+    """Load the base model and tokenizer via Unsloth."""
+    log.info(f"Loading model: {cfg.model_name}")
+    log.info(f"  Max seq length : {cfg.max_seq_length}")
+    log.info(f"  4-bit quantize : {cfg.load_in_4bit}")
+
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=cfg.model_name,
+        max_seq_length=cfg.max_seq_length,
+        dtype=torch.bfloat16,   # Explicit bf16 for L40S
+        load_in_4bit=cfg.load_in_4bit,
+    )
+
+    # Qwen2.5 uses a specific pad token. Setting it explicitly prevents
+    # silent tokenization bugs where padding tokens leak into the loss.
+    tokenizer.padding_side = "right"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    log.info("Base model loaded successfully.")
+    return model, tokenizer
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 6: LORA ADAPTER INJECTION
+#
+# WHY THESE SPECIFIC TARGET_MODULES?
+#
+# In a transformer block, there are two types of computation:
+# (1) Attention: q_proj, k_proj, v_proj compute queries/keys/values.
+#     o_proj projects the attended values back to hidden dim.
+#     These learn WHICH parts of the sensor prompt to attend to when
+#     deciding where to place the next waypoint.
+#
+# (2) MLP / Feed-forward: gate_proj, up_proj, down_proj.
+#     These apply non-linear transformations to the attended representation.
+#     For structured output tasks, the MLP layers are where numeric
+#     patterns are stored — the model learns that "obstacle at 5.7m in
+#     far_left sector → move y slightly right" type associations here.
+#
+# Applying LoRA only to q_proj and v_proj (as many tutorials show) leaves
+# the MLP adapters out, which significantly hurts coordinate accuracy.
+# Apply to all 7 layer types for best results on your task.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def apply_lora(model, cfg: TrainConfig):
+    """Inject LoRA adapters into the model."""
+    log.info(f"Applying LoRA: rank={cfg.lora_r}, alpha={cfg.lora_alpha}")
+
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=cfg.lora_r,
+        lora_alpha=cfg.lora_alpha,
+        lora_dropout=cfg.lora_dropout,
+        target_modules=cfg.target_modules,
+        bias="none",
+        # gradient_checkpointing trades compute for memory.
+        # With 46 GB VRAM you likely don't need it, but it's free insurance.
+        use_gradient_checkpointing="unsloth",
+        random_state=cfg.seed,
+    )
+
+    # Print trainable parameter count
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    log.info(
+        f"Trainable parameters: {trainable:,} / {total:,} "
+        f"({100 * trainable / total:.2f}%)"
+    )
+    # For Qwen2.5-7B with rank=32, this will be roughly:
+    # ~83M trainable / 7.6B total = ~1.1%
+    # That's the power of LoRA: 1% of parameters, most of the adaptation.
+
+    return model
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 7: TRAINING ARGUMENTS
+#
+# WHY THESE SPECIFIC SETTINGS FOR YOUR TASK?
+# Each setting is tuned for: long-sequence structured output, L40S hardware,
+# and the need to learn precise floating-point coordinate generation.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_training_args(cfg: TrainConfig) -> SFTConfig:
+    return SFTConfig(
+        output_dir=cfg.output_dir,
+
+        # --- Core training schedule ---
+        num_train_epochs=cfg.num_train_epochs,
+        per_device_train_batch_size=cfg.per_device_train_batch_size,
+        per_device_eval_batch_size=2,
+        gradient_accumulation_steps=cfg.gradient_accumulation_steps,
+
+        # --- Optimizer ---
+        learning_rate=cfg.learning_rate,
+        warmup_ratio=cfg.warmup_ratio,
+        lr_scheduler_type=cfg.lr_scheduler_type,
+        optim="adamw_torch_fused",
+        # WHY FUSED ADAMW: PyTorch's fused AdamW does the optimizer step
+        # in a single CUDA kernel instead of separate operations. On L40S
+        # this is 10-15% faster with no quality difference.
+
+        weight_decay=0.01,
+        # Light L2 regularization on non-LoRA parameters. Helps prevent
+        # the model from over-relying on a small set of attention heads.
+
+        max_grad_norm=1.0,
+        # Gradient clipping. Prevents exploding gradients if a batch
+        # contains an unusually hard or unusual obstacle configuration.
+
+        # --- Precision ---
+        bf16=cfg.bf16,
+        fp16=False,
+
+        # --- Sequence length ---
+        max_seq_length=cfg.max_seq_length,
+
+        # --- Logging ---
+        logging_dir=os.path.join(cfg.output_dir, "logs"),
+        logging_steps=cfg.logging_steps,
+        report_to="tensorboard",
+        # Run: tensorboard --logdir ./drone_planner_checkpoints/logs
+        # to monitor training loss and val loss in real time.
+
+        # --- Evaluation & Checkpointing ---
+        eval_strategy="steps",
+        eval_steps=cfg.eval_steps,
+        save_strategy="steps",
+        save_steps=cfg.save_steps,
+        save_total_limit=cfg.save_total_limit,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+
+        # --- Reproducibility ---
+        seed=cfg.seed,
+        data_seed=cfg.seed,
+
+        # --- SFT-specific: CRITICAL for your task ---
+        dataset_text_field=None,  # We use "messages" format
+        dataset_kwargs={"skip_prepare_dataset": False},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 8: EVALUATION CALLBACKS
+#
+# WHY CUSTOM EVALUATION?
+# Standard eval_loss tells you how well the model predicts tokens, but for
+# YOUR task you care about:
+# (1) JSON validity rate — does the model produce parseable output?
+# (2) Waypoint L2 error — are the coordinates close to the MPC ground truth?
+# (3) Safety violations — does any waypoint land inside an obstacle?
+#
+# This callback runs after each evaluation step and logs these task-specific
+# metrics alongside the standard loss. These are the metrics you actually
+# care about, not just cross-entropy.
+# ─────────────────────────────────────────────────────────────────────────────
+
+from transformers import TrainerCallback
+import numpy as np
+
+class WaypointEvalCallback(TrainerCallback):
+    """
+    After each eval step, generate predictions on a small subset of the
+    validation set and compute task-specific metrics.
+    """
+    def __init__(self, model, tokenizer, val_dataset, num_samples=20):
+        self.model = model
+        self.tokenizer = tokenizer
+        # Sample a fixed small subset for fast evaluation during training
+        indices = np.random.choice(len(val_dataset), min(num_samples, len(val_dataset)), replace=False)
+        self.eval_samples = val_dataset.select(indices)
+
+    def on_evaluate(self, args, state, control, **kwargs):
+        log.info("Running waypoint-specific evaluation...")
+
+        valid_json = 0
+        l2_errors = []
+        safety_violations = 0
+
+        FastLanguageModel.for_inference(self.model)  # Switch to inference mode
+
+        for sample in self.eval_samples:
+            messages = sample["messages"]
+
+            # Get the ground truth assistant message (MPC label)
+            gt_content = next(
+                m["content"] for m in messages if m["role"] == "assistant"
+            )
+
+            # Build the input (system + user only, no assistant turn)
+            input_messages = [m for m in messages if m["role"] != "assistant"]
+            input_ids = self.tokenizer.apply_chat_template(
+                input_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+                return_tensors="pt"
+            ).to(self.model.device)
+
+            with torch.no_grad():
+                output_ids = self.model.generate(
+                    input_ids=input_ids,
+                    max_new_tokens=400,
+                    temperature=0.1,   # Near-deterministic for eval
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                )
+
+            # Decode only the new tokens (not the input)
+            new_tokens = output_ids[0][input_ids.shape[1]:]
+            prediction = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+            # --- Metric 1: JSON validity ---
+            try:
+                pred_data = json.loads(prediction)
+                valid_json += 1
+
+                pred_wps = pred_data.get("waypoints", [])
+                gt_data = json.loads(gt_content)
+                gt_wps = gt_data.get("waypoints", [])
+
+                # --- Metric 2: Waypoint L2 error ---
+                if len(pred_wps) == 5 and len(gt_wps) == 5:
+                    for p, g in zip(pred_wps, gt_wps):
+                        dist = np.sqrt(
+                            (p["x"] - g["x"])**2 +
+                            (p["y"] - g["y"])**2 +
+                            (p["z"] - g["z"])**2
+                        )
+                        l2_errors.append(dist)
+
+                # --- Metric 3: Safety check (z >= 0 means below ground) ---
+                for wp in pred_wps:
+                    if wp.get("z", -1) >= 0:
+                        safety_violations += 1
+
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass  # JSON invalid — already counted above
+
+        # Switch back to training mode
+        FastLanguageModel.for_training(self.model)
+
+        n = len(self.eval_samples)
+        json_rate = valid_json / n * 100
+        mean_l2 = np.mean(l2_errors) if l2_errors else float("nan")
+
+        log.info(f"  JSON validity    : {json_rate:.1f}% ({valid_json}/{n})")
+        log.info(f"  Mean L2 error    : {mean_l2:.3f} m")
+        log.info(f"  Safety violations: {safety_violations}")
+
+        # Targets to aim for:
+        #   JSON validity  > 95%
+        #   Mean L2 error  < 0.5 m
+        #   Safety violations = 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 9: MAIN TRAINING LOOP
+#
+# WHY SFTTrainer INSTEAD OF A CUSTOM LOOP?
+# SFTTrainer handles several subtle but critical things automatically:
+# (1) Loss masking: Only computes cross-entropy loss on the ASSISTANT tokens.
+#     This means the model learns to generate waypoints, not to "predict"
+#     the sensor input. Without this, ~80% of gradient signal is wasted on
+#     learning to reproduce your input prompts.
+# (2) Chat template formatting: Applies Qwen2.5's <|im_start|> / <|im_end|>
+#     tokens correctly, which is required for the instruct model to understand
+#     system/user/assistant role separation.
+# (3) Sequence packing (optional): Can pack multiple short examples into one
+#     sequence to reduce padding waste. For your ~1200-token examples this
+#     is less critical, but enabled by default.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main():
+    log.info("=" * 60)
+    log.info("Drone Motion Planner — LoRA Fine-Tuning")
+    log.info("=" * 60)
+
+    # 1. Load and validate data
+    train_dataset, val_dataset = load_and_prepare_dataset(cfg)
+
+    # 2. Load model
+    model, tokenizer = load_model_and_tokenizer(cfg)
+
+    # 3. Inject LoRA adapters
+    model = apply_lora(model, cfg)
+
+    # 4. Build training arguments
+    training_args = build_training_args(cfg)
+
+    # 5. Build custom evaluation callback
+    eval_callback = WaypointEvalCallback(
+        model=model,
+        tokenizer=tokenizer,
+        val_dataset=val_dataset,
+        num_samples=20,
+    )
+
+    # 6. Build trainer
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        args=training_args,
+        callbacks=[eval_callback],
+    )
+
+    # 7. Log GPU memory before training
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            total = torch.cuda.get_device_properties(i).total_memory / 1e9
+            allocated = torch.cuda.memory_allocated(i) / 1e9
+            log.info(f"GPU {i}: {allocated:.1f} GB allocated / {total:.1f} GB total")
+
+    # 8. Train
+    log.info("Starting training...")
+    log.info(f"  Epochs          : {cfg.num_train_epochs}")
+    log.info(f"  Effective batch : {cfg.per_device_train_batch_size * cfg.gradient_accumulation_steps} per GPU")
+    log.info(f"  Learning rate   : {cfg.learning_rate}")
+    log.info(f"  Checkpoints at  : {cfg.output_dir}")
+
+    trainer.train()
+
+    # 9. Save final model
+    log.info("Training complete. Saving final model...")
+    final_dir = os.path.join(cfg.output_dir, "final_adapter")
+    model.save_pretrained(final_dir)
+    tokenizer.save_pretrained(final_dir)
+    log.info(f"LoRA adapter saved to: {final_dir}")
+
+    # 10. Optionally merge LoRA weights into base model
+    # This creates a single standalone model (no adapter overhead at inference)
+    merged_dir = os.path.join(cfg.output_dir, "final_merged")
+    log.info(f"Merging LoRA into base model → {merged_dir}")
+    model.save_pretrained_merged(
+        merged_dir,
+        tokenizer,
+        save_method="merged_16bit",
+        # WHY MERGED: At inference time, a merged model has zero LoRA overhead.
+        # The adapter math (W + BA) is pre-computed into W directly.
+        # For a drone real-time system where latency matters, always use merged.
+    )
+    log.info("Done! Merged model ready for inference.")
+    log.info(f"To run inference: load model from {merged_dir}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 10: INFERENCE HELPER
+#
+# Run this AFTER training to test your model on a new sensor prompt.
+# Temperature=0.1 gives near-deterministic output — appropriate for a
+# safety-critical real-time planning system. Never use temperature=1.0
+# in production for this task.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_inference(model_path: str, sensor_prompt: str) -> dict:
+    """
+    Load the merged fine-tuned model and generate a trajectory for a given
+    sensor prompt. Returns parsed JSON dict with waypoints.
+
+    Args:
+        model_path: Path to merged model directory (output of save_pretrained_merged)
+        sensor_prompt: The NL description of current drone state (your existing prompt format)
+
+    Returns:
+        dict with keys: waypoints, selected_waypoint_index, reasoning
+    """
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=model_path,
+        max_seq_length=2048,
+        dtype=torch.bfloat16,
+        load_in_4bit=False,
+    )
+    FastLanguageModel.for_inference(model)
+
+    messages = [
+        {"role": "system",  "content": SYSTEM_PROMPT},
+        {"role": "user",    "content": sensor_prompt},
+    ]
+
+    input_ids = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_tensors="pt"
+    ).to(model.device)
+
+    with torch.no_grad():
+        output_ids = model.generate(
+            input_ids=input_ids,
+            max_new_tokens=400,
+            temperature=0.1,
+            do_sample=True,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+
+    new_tokens = output_ids[0][input_ids.shape[1]:]
+    response = tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+    try:
+        return json.loads(response)
+    except json.JSONDecodeError as e:
+        log.error(f"Model produced invalid JSON: {e}")
+        log.error(f"Raw output: {response}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
