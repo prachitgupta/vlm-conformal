@@ -44,6 +44,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 import csv
+import math
 import inspect
 import json
 import os
@@ -228,6 +229,15 @@ def _filter_supported_kwargs(callable_obj, kwargs: dict, alias_map: Optional[dic
         supported[target_key] = value
 
     return supported, dropped
+
+
+def _compute_warmup_steps(cfg: TrainConfig, train_dataset_len: int) -> int:
+    world_size = max(1, int(os.environ.get("WORLD_SIZE", "1")))
+    micro_batch = max(1, cfg.per_device_train_batch_size * world_size)
+    steps_per_epoch = max(1, math.ceil(train_dataset_len / micro_batch))
+    optimizer_steps_per_epoch = max(1, math.ceil(steps_per_epoch / max(1, cfg.gradient_accumulation_steps)))
+    total_optimizer_steps = max(1, math.ceil(cfg.num_train_epochs * optimizer_steps_per_epoch))
+    return max(1, math.ceil(total_optimizer_steps * cfg.warmup_ratio))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -452,6 +462,12 @@ def load_model_and_tokenizer(cfg: TrainConfig):
     # Qwen2.5 uses a specific pad token. Setting it explicitly prevents
     # silent tokenization bugs where padding tokens leak into the loss.
     tokenizer.padding_side = "right"
+    qwen_chat_eos = "<|im_end|>"
+    qwen_chat_eos_id = tokenizer.convert_tokens_to_ids(qwen_chat_eos)
+    if qwen_chat_eos_id is not None and qwen_chat_eos_id != getattr(tokenizer, "unk_token_id", None):
+        tokenizer.eos_token = qwen_chat_eos
+        tokenizer.eos_token_id = qwen_chat_eos_id
+        log.info("Aligned tokenizer EOS token to chat template terminator: %s", tokenizer.eos_token)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -520,7 +536,11 @@ def apply_lora(model, cfg: TrainConfig):
 # and the need to learn precise floating-point coordinate generation.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_training_args(cfg: TrainConfig) -> SFTConfig:
+def build_training_args(cfg: TrainConfig, tokenizer, train_dataset_len: int) -> SFTConfig:
+    warmup_steps = _compute_warmup_steps(cfg, train_dataset_len)
+    tensorboard_log_dir = os.path.join(cfg.output_dir, "logs")
+    os.environ["TENSORBOARD_LOGGING_DIR"] = tensorboard_log_dir
+
     raw_kwargs = dict(
         output_dir=cfg.output_dir,
 
@@ -532,7 +552,7 @@ def build_training_args(cfg: TrainConfig) -> SFTConfig:
 
         # --- Optimizer ---
         learning_rate=cfg.learning_rate,
-        warmup_ratio=cfg.warmup_ratio,
+        warmup_steps=warmup_steps,
         lr_scheduler_type=cfg.lr_scheduler_type,
         optim="adamw_torch_fused",
         # WHY FUSED ADAMW: PyTorch's fused AdamW does the optimizer step
@@ -555,7 +575,6 @@ def build_training_args(cfg: TrainConfig) -> SFTConfig:
         max_seq_length=cfg.max_seq_length,
 
         # --- Logging ---
-        logging_dir=os.path.join(cfg.output_dir, "logs"),
         logging_steps=cfg.logging_steps,
         report_to="tensorboard",
         # Run: tensorboard --logdir ./drone_planner_checkpoints/logs
@@ -577,6 +596,7 @@ def build_training_args(cfg: TrainConfig) -> SFTConfig:
         # --- SFT-specific: CRITICAL for your task ---
         dataset_text_field=None,  # We use "messages" format
         dataset_kwargs={"skip_prepare_dataset": False},
+        eos_token=tokenizer.eos_token,
     )
 
     sft_kwargs, dropped = _filter_supported_kwargs(
@@ -589,6 +609,7 @@ def build_training_args(cfg: TrainConfig) -> SFTConfig:
     )
     if dropped:
         log.warning("Dropping unsupported SFTConfig args for this TRL version: %s", sorted(dropped))
+    log.info("Using warmup_steps=%s (derived from warmup_ratio=%.3f)", warmup_steps, cfg.warmup_ratio)
     if "max_length" in sft_kwargs:
         log.info("Using SFTConfig(max_length=%s) compatibility path", sft_kwargs["max_length"])
     elif "max_seq_length" in sft_kwargs:
@@ -742,7 +763,7 @@ def main():
     model = apply_lora(model, cfg)
 
     # 4. Build training arguments
-    training_args = build_training_args(cfg)
+    training_args = build_training_args(cfg, tokenizer, len(train_dataset))
 
     # 5. Build custom evaluation callback
     eval_callback = WaypointEvalCallback(
