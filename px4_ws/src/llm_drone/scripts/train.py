@@ -241,6 +241,20 @@ def _compute_warmup_steps(cfg: TrainConfig, train_dataset_len: int) -> int:
     return max(1, math.ceil(total_optimizer_steps * cfg.warmup_ratio))
 
 
+def formatting_prompts_func(example, tokenizer):
+    """
+    Unsloth's compiled SFTTrainer path may require an explicit formatting_func
+    even for conversational datasets. Support both batched and unbatched inputs.
+    """
+    messages = example["messages"]
+    if messages and isinstance(messages[0], list):
+        return [
+            tokenizer.apply_chat_template(message_list, tokenize=False, add_generation_prompt=False)
+            for message_list in messages
+        ]
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3: SYSTEM PROMPT
 #
@@ -792,6 +806,7 @@ def main():
         "callbacks": [eval_callback],
         # TRL renamed this from `tokenizer` to `processing_class` in newer releases.
         "tokenizer": tokenizer,
+        "formatting_func": lambda example: formatting_prompts_func(example, tokenizer),
     }
     trainer_kwargs, dropped_trainer_kwargs = _filter_supported_kwargs(
         SFTTrainer,
