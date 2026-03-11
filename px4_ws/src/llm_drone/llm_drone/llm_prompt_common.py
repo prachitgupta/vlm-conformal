@@ -14,7 +14,7 @@ PROMPT_DEPTH_STATS_MAX_M = 20.0
 OBS_FIFO_LEN = 200
 MPC_DEPTH_SAMPLE_COUNT = 500
 
-LLM_PLANNER_PROMPT_FILENAME = 'llm_planner_prompt.txt'
+LLM_PLANNER_PROMPT_FILENAME = 'llm_prompt.txt'
 DATASET_PROMPT_FILENAME = 'llm_prompt.txt'
 DEFAULT_SYSTEM_PROMPT = "You are a drone motion planning system. Generate safe trajectories."
 
