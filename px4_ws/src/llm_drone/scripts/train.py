@@ -44,6 +44,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 import csv
+import inspect
 import json
 import os
 import logging
@@ -202,6 +203,31 @@ class TrainConfig:
 
 
 cfg = TrainConfig()
+
+
+def _filter_supported_kwargs(callable_obj, kwargs: dict, alias_map: Optional[dict[str, list[str]]] = None) -> tuple[dict, dict]:
+    """
+    Keep only kwargs supported by the target callable and map renamed args
+    across TRL versions, e.g. max_seq_length -> max_length.
+    """
+    params = inspect.signature(callable_obj).parameters
+    supported = {}
+    dropped = {}
+    alias_map = alias_map or {}
+
+    for key, value in kwargs.items():
+        target_key = key
+        if key not in params:
+            for alias in alias_map.get(key, []):
+                if alias in params:
+                    target_key = alias
+                    break
+            else:
+                dropped[key] = value
+                continue
+        supported[target_key] = value
+
+    return supported, dropped
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -495,7 +521,7 @@ def apply_lora(model, cfg: TrainConfig):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_training_args(cfg: TrainConfig) -> SFTConfig:
-    return SFTConfig(
+    raw_kwargs = dict(
         output_dir=cfg.output_dir,
 
         # --- Core training schedule ---
@@ -552,6 +578,23 @@ def build_training_args(cfg: TrainConfig) -> SFTConfig:
         dataset_text_field=None,  # We use "messages" format
         dataset_kwargs={"skip_prepare_dataset": False},
     )
+
+    sft_kwargs, dropped = _filter_supported_kwargs(
+        SFTConfig,
+        raw_kwargs,
+        alias_map={
+            "max_seq_length": ["max_length"],
+            "eval_strategy": ["evaluation_strategy"],
+        },
+    )
+    if dropped:
+        log.warning("Dropping unsupported SFTConfig args for this TRL version: %s", sorted(dropped))
+    if "max_length" in sft_kwargs:
+        log.info("Using SFTConfig(max_length=%s) compatibility path", sft_kwargs["max_length"])
+    elif "max_seq_length" in sft_kwargs:
+        log.info("Using SFTConfig(max_seq_length=%s)", sft_kwargs["max_seq_length"])
+
+    return SFTConfig(**sft_kwargs)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -710,14 +753,26 @@ def main():
     )
 
     # 6. Build trainer
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        args=training_args,
-        callbacks=[eval_callback],
+    trainer_kwargs = {
+        "model": model,
+        "train_dataset": train_dataset,
+        "eval_dataset": val_dataset,
+        "args": training_args,
+        "callbacks": [eval_callback],
+        # TRL renamed this from `tokenizer` to `processing_class` in newer releases.
+        "tokenizer": tokenizer,
+    }
+    trainer_kwargs, dropped_trainer_kwargs = _filter_supported_kwargs(
+        SFTTrainer,
+        trainer_kwargs,
+        alias_map={"tokenizer": ["processing_class"]},
     )
+    if dropped_trainer_kwargs:
+        log.warning(
+            "Dropping unsupported SFTTrainer args for this TRL version: %s",
+            sorted(dropped_trainer_kwargs),
+        )
+    trainer = SFTTrainer(**trainer_kwargs)
 
     # 7. Log GPU memory before training
     if torch.cuda.is_available():
