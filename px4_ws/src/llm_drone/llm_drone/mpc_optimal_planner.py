@@ -59,7 +59,7 @@ Ts          = 0.1         # sampling time [s]
 T_horizon   = 50         # MPC prediction horizon [steps]
 V_MAX       = 2.0         # per-axis max commanded velocity [m/s]
 A_MAX       = 1.5         # per-axis max commanded acceleration [m/s^2]
-N_OBS       = 2            # nearest-point method: N=1 (Section III-A)
+N_OBS       = 1            # nearest-point method: N=1 (Section III-A)
 Q_diag      = np.array([20.0, 20.0, 20.0, 1, 1, 1])   # tracking weight Q
 SCP_MAX_OUTER_ITERS = 4    # sequential convexification iterations per MPC cycle
 SCP_INNER_ITERS = 6        # projected-gradient iterations per convex sub-problem
@@ -73,7 +73,7 @@ SCP_BETA_GROW = 1.1        # trust-region growth factor after accepted step
 SCP_BETA_SHRINK = 0.5      # trust-region shrink factor after rejected step
 TRUST_POS0   = 1.0         # initial trust region on position trajectory [m]
 TRUST_U0     = 1.0         # initial tust region on velocity command [m/s]
-MIN_CLEARANCE = 2      # desired clearance [m] from nearest obstacle point
+MIN_CLEARANCE = 0.5      # desired clearance [m] from nearest obstacle point
 # OakD-Lite StereoOV7251 depth sensor from PX4 Gazebo SDF:
 #   x500_depth mount + OakD-Lite/model.sdf (horizontal_fov=1.274 rad, 640x480,
 #   near=0.2 m, far=19.1 m). Vertical FOV is derived from aspect ratio.
@@ -91,8 +91,9 @@ DEBUG_PLOT_OBS_MAX = 200   # max local obstacle points shown in debug plot
 DEBUG_PATH_HISTORY_LEN = 300
 MPC_LABEL_WAYPOINT_COUNT = 5  # publish next 5 waypoints from final solved X_opt for dataset labels
 USE_VELOCITY_ONLY_SETPOINT = True  # publish velocity setpoints as primary NED command
+LOCAL_PREDICTION_SEQUENCE_TOPIC = '/mpc/local_prediction_sequence'
 FRESH_COMMITTED_WAYPOINT_TOPIC = '/mpc/committed_waypoint_fresh'
-HOLD_WAYPOINT_TOPIC = '/mpc/committed_waypoint_hold'
+EXECUTED_COMMITTED_WAYPOINT_TOPIC = '/mpc/committed_waypoint_executed'
 PUBLISH_PERIOD_SEC = 0.05
 OFFBOARD_HEARTBEAT_PERIOD_SEC = 0.05
 SOLVE_WARN_SEC = 0.10
@@ -946,9 +947,18 @@ class MPCUAVNode(Node):
             px4_qos)
         # Dataset-label publishers derived from the final solved MPC trajectory X_opt.
         self._mpc_label_path_pub = self.create_publisher(Path, '/mpc/trajectory_sequence', 10)
+        self._mpc_local_prediction_path_pub = self.create_publisher(
+            Path,
+            LOCAL_PREDICTION_SEQUENCE_TOPIC,
+            10,
+        )
         self._mpc_traj_point_pub = self.create_publisher(PoseStamped, '/mpc/trajectory', 10)
         self._fresh_committed_waypoint_pub = self.create_publisher(PoseStamped, FRESH_COMMITTED_WAYPOINT_TOPIC, 10)
-        self._hold_waypoint_pub = self.create_publisher(PoseStamped, HOLD_WAYPOINT_TOPIC, 10)
+        self._executed_committed_waypoint_pub = self.create_publisher(
+            PoseStamped,
+            EXECUTED_COMMITTED_WAYPOINT_TOPIC,
+            10,
+        )
 
         # ── MPC components ──────────────────────────────────────────────────
         self._mpc       = MPCPlanner(backend=self._mpc_solver_backend)
@@ -984,8 +994,6 @@ class MPCUAVNode(Node):
         self._latest_vel_sp_ned = np.zeros(3, dtype=float)
         self._latest_yaw_sp: float | None = YAW_TARGET_RAD
         self._latest_yaw_rate_sp: float | None = 0.0
-        self._latest_command_source = 'idle'
-
         self.declare_parameter('disable_obstacle_constraints', DEFAULT_OBSTACLE_CONSTRAINTS_DISABLED)
         self.declare_parameter('goal_reached_threshold_m', GOAL_REACHED_THRESHOLD_M)
         self.declare_parameter('goal_reached_yaw_threshold_rad', GOAL_REACHED_YAW_THRESHOLD_RAD)
@@ -1004,6 +1012,11 @@ class MPCUAVNode(Node):
                 'enable_depth_camera=False: depth subscription is disabled, so the obstacle map '
                 'will remain empty and MPC will run without depth-based obstacle avoidance. '
                 'Restart with --ros-args -p enable_depth_camera:=true to restore depth input.'
+            )
+        if bool(self.get_parameter('hold_during_solve').value):
+            self.get_logger().warn(
+                'hold_during_solve is ignored: the planner now preserves the last fresh MPC command '
+                'while the next solve runs asynchronously.'
             )
 
         self.get_logger().info(f'Using MPC solver backend: {self._mpc.backend_name}')
@@ -1096,25 +1109,14 @@ class MPCUAVNode(Node):
         Drive the asynchronous MPC pipeline without blocking ROS timers.
         """
         self._tick_count += 1
-        hold_during_solve = self._hold_during_solve_enabled()
         if self._solver_future is not None and self._solver_future.done():
             self._consume_solver_result()
-            if hold_during_solve:
-                return
 
         if self._solver_future is not None:
-            if hold_during_solve:
-                self._activate_hold_command()
             return
 
         request = self._build_solver_request()
         self._solver_future = self._solver_executor.submit(self._solve_mpc_request, request)
-        if hold_during_solve:
-            self._activate_hold_command()
-
-    def _hold_during_solve_enabled(self) -> bool:
-        """Return whether debug hold mode should replace the active command while solving."""
-        return bool(self.get_parameter('hold_during_solve').value)
 
     def _build_solver_request(self) -> dict:
         """Snapshot the current planner state for a background MPC solve."""
@@ -1292,8 +1294,12 @@ class MPCUAVNode(Node):
         self._latest_vel_sp_ned = np.array(result['u_cmd'][:3], dtype=float, copy=True)
         self._latest_yaw_sp = YAW_TARGET_RAD
         self._latest_yaw_rate_sp = 0.0
-        self._latest_command_source = 'fresh'
         self._publish_mpc_trajectory_point(self._latest_pos_sp_ned, stamp_msg)
+        self._publish_waypoint_event(
+            self._executed_committed_waypoint_pub,
+            self._latest_pos_sp_ned,
+            self.get_clock().now().to_msg(),
+        )
         self._publish_waypoint_event(
             self._fresh_committed_waypoint_pub,
             self._latest_pos_sp_ned,
@@ -1330,15 +1336,6 @@ class MPCUAVNode(Node):
     def _debug_plot_step(self) -> None:
         """Separate timer loop for debug plotting (main thread-safe)."""
         self._debug_plotter.draw_latest()
-
-    def _activate_hold_command(self) -> None:
-        """While a solve is inflight, command a zero-velocity hold at the current pose."""
-        self._latest_pos_sp_ned = np.array(self._x_state[:3], dtype=float, copy=True)
-        self._latest_vel_sp_ned = np.zeros(3, dtype=float)
-        self._last_u_cmd_ned[:] = 0.0
-        self._latest_yaw_sp = float(self._x_state[6]) if self._x_state.shape[0] >= 7 else YAW_TARGET_RAD
-        self._latest_yaw_rate_sp = 0.0
-        self._latest_command_source = 'hold'
 
     @staticmethod
     def _publish_waypoint_event(pub, pos_ned: np.ndarray, stamp_msg) -> None:
@@ -1431,17 +1428,11 @@ class MPCUAVNode(Node):
             yaw_sp=self._latest_yaw_sp,
             yaw_rate_sp=self._latest_yaw_rate_sp,
         )
-        if self._latest_command_source == 'hold':
-            self._publish_waypoint_event(
-                self._hold_waypoint_pub,
-                self._latest_pos_sp_ned,
-                self.get_clock().now().to_msg(),
-            )
 
     def _publish_mpc_label_trajectory(self, waypoints_xy: np.ndarray, stamp_msg, goal_z_ned: float) -> None:
         """
-        Publish timestamped MPC label trajectory (next 5 waypoints) for dataset generation.
-        Labels are planar waypoints in NED with z fixed to the current goal altitude.
+        Publish the open-loop 5-step MPC prediction from a single solve.
+        These are not guaranteed to be the 5 waypoints eventually executed after future replans.
         """
         path = Path()
         path.header.stamp = stamp_msg
@@ -1464,6 +1455,7 @@ class MPCUAVNode(Node):
             path.poses.append(pose)
 
         self._mpc_label_path_pub.publish(path)
+        self._mpc_local_prediction_path_pub.publish(path)
 
     def _publish_mpc_trajectory_point(self, pos_ned: np.ndarray, stamp_msg) -> None:
         """Publish the executed first waypoint for compatibility with /mpc/trajectory consumers."""

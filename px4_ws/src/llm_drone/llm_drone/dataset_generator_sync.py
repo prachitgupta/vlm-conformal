@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Synchronized dataset generator for LLM fine-tuning (Step 3 pipeline).
+Synchronized dataset generator for MPC imitation data.
 
-For each timestamped MPC label message on /mpc/trajectory_sequence (nav_msgs/Path):
-1) find nearest synchronized scene snapshot (odom + depth)
-2) build prompt using the same environment-vector/prompt format as llm_planner.py
-3) write one CSV row with prompt + 5-waypoint MPC label sequence
+Supported label modes:
+1) local_mpc_prediction_window:
+   prompt at the solver scene timestamp -> 5 open-loop waypoints from one solved MPC plan
+2) executed_committed_waypoint_window:
+   prompt at the solver scene timestamp -> 5 committed waypoints that actually became active
 
-This fixes time alignment by anchoring on the MPC label timestamp and matching buffered
-sensor/state data within configurable tolerances.
+This keeps the prompt aligned to the scene the solver saw, while allowing you to choose
+between local open-loop predictions and actual executed committed waypoints.
 """
 
 from __future__ import annotations
@@ -21,10 +22,12 @@ from pathlib import Path as FsPath
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path as RosPath
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
+from llm_drone.eval import EvalResult, evaluate_response, _sanitize_for_json
 from llm_drone.llm_prompt_common import (
     DATASET_PROMPT_FILENAME,
     DEPTH_HFOV_DEG,
@@ -46,6 +49,11 @@ except ImportError:
     HAS_PX4_MSGS = False
 
 LABEL_WAYPOINT_COUNT = 5
+LOCAL_PREDICTION_SEQUENCE_TOPIC = '/mpc/local_prediction_sequence'
+FRESH_COMMITTED_WAYPOINT_TOPIC = '/mpc/committed_waypoint_fresh'
+EXECUTED_COMMITTED_WAYPOINT_TOPIC = '/mpc/committed_waypoint_executed'
+LABEL_MODE_LOCAL_PREDICTION = 'local_mpc_prediction_window'
+LABEL_MODE_EXECUTED = 'executed_committed_waypoint_window'
 
 
 class LocalObstacleMap:
@@ -133,12 +141,18 @@ class SyncDatasetGenerator(Node):
         self.declare_parameter('goal_y', 3.0)
         self.declare_parameter('goal_z', 2.5)
         self.declare_parameter('goal_frame', 'ned')
-        self.declare_parameter('output_csv', '/tmp/llm_sync_dataset.csv')
+        self.declare_parameter('output_csv', '../dataset/dataset.csv')
+        self.declare_parameter('label_mode', LABEL_MODE_LOCAL_PREDICTION)
         self.declare_parameter('max_odom_sync_dt_s', 0.10)   # depth->odom pairing tolerance
         self.declare_parameter('max_label_sync_dt_s', 0.20)  # label->scene pairing tolerance
         self.declare_parameter('odom_buffer_size', 400)
         self.declare_parameter('scene_buffer_size', 400)
+        self.declare_parameter('waypoint_buffer_size', 400)
         self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
+        self.declare_parameter('eval_dt_s', 0.1)
+        self.declare_parameter('eval_v_max_mps', 2.0)
+        self.declare_parameter('eval_a_max_mps2', 1.5)
+        self.declare_parameter('eval_safety_radius_m', 0.5)
 
         self.goal = self.convert_goal_to_ned(
             np.array([
@@ -151,8 +165,20 @@ class SyncDatasetGenerator(Node):
         self.max_odom_sync_dt_s = float(self.get_parameter('max_odom_sync_dt_s').value)
         self.max_label_sync_dt_s = float(self.get_parameter('max_label_sync_dt_s').value)
         self.output_csv = str(self.get_parameter('output_csv').value)
+        self.label_mode = str(self.get_parameter('label_mode').value).strip().lower()
+        self.eval_dt_s = float(self.get_parameter('eval_dt_s').value)
+        self.eval_v_max_mps = float(self.get_parameter('eval_v_max_mps').value)
+        self.eval_a_max_mps2 = float(self.get_parameter('eval_a_max_mps2').value)
+        self.eval_safety_radius_m = float(self.get_parameter('eval_safety_radius_m').value)
+        if self.label_mode not in (LABEL_MODE_LOCAL_PREDICTION, LABEL_MODE_EXECUTED):
+            self.get_logger().warn(
+                f'Unknown label_mode={self.label_mode!r}; falling back to {LABEL_MODE_EXECUTED}.'
+            )
+            self.label_mode = LABEL_MODE_EXECUTED
         self.odom_buffer = deque(maxlen=int(self.get_parameter('odom_buffer_size').value))
         self.scene_buffer = deque(maxlen=int(self.get_parameter('scene_buffer_size').value))
+        self.executed_waypoint_buffer = deque(maxlen=int(self.get_parameter('waypoint_buffer_size').value))
+        self.pending_anchors = deque()
 
         self.bridge = CvBridge()
         self.depth_to_obstacles = DepthToObstacles(
@@ -186,35 +212,73 @@ class SyncDatasetGenerator(Node):
             self.depth_image_callback,
             qos_profile_sensor_data,
         )
-        self.create_subscription(
-            RosPath,
-            '/mpc/trajectory_sequence',
-            self.mpc_trajectory_sequence_callback,
-            10,
-        )
+        if self.label_mode == LABEL_MODE_LOCAL_PREDICTION:
+            self.create_subscription(
+                RosPath,
+                LOCAL_PREDICTION_SEQUENCE_TOPIC,
+                self.local_prediction_callback,
+                10,
+            )
+        else:
+            self.create_subscription(
+                PoseStamped,
+                FRESH_COMMITTED_WAYPOINT_TOPIC,
+                self.fresh_committed_waypoint_callback,
+                10,
+            )
+            self.create_subscription(
+                PoseStamped,
+                EXECUTED_COMMITTED_WAYPOINT_TOPIC,
+                self.executed_committed_waypoint_callback,
+                10,
+            )
 
         self._init_csv()
         self.get_logger().info(f'Sync dataset generator started. output_csv={self.output_csv}')
-        self.get_logger().info('Anchor topic: /mpc/trajectory_sequence (5-waypoint labels)')
+        self.get_logger().info(f'label_mode={self.label_mode}')
+        if self.label_mode == LABEL_MODE_LOCAL_PREDICTION:
+            self.get_logger().info(
+                f'Prediction topic: {LOCAL_PREDICTION_SEQUENCE_TOPIC} (5-waypoint local MPC prediction)'
+            )
+        else:
+            self.get_logger().info(
+                f'Anchor topic: {FRESH_COMMITTED_WAYPOINT_TOPIC} (solve request timestamp)'
+            )
+            self.get_logger().info(
+                f'Executed label topic: {EXECUTED_COMMITTED_WAYPOINT_TOPIC} (actual committed waypoints)'
+            )
 
     def _init_csv(self) -> None:
         out_path = FsPath(self.output_csv)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         write_header = (not out_path.exists()) or out_path.stat().st_size == 0
+        expected_header_cols = [
+            'anchor_stamp_s',
+            'scene_stamp_s',
+            'sync_dt_ms',
+            'label_mode',
+            'prompt',
+            'label_waypoints_json',
+        ]
         self._csv_fp = open(out_path, 'a', newline='')
         self._csv_writer = csv.writer(self._csv_fp)
         if write_header:
-            header = [
-                'label_stamp_s',
-                'scene_stamp_s',
-                'sync_dt_ms',
-                'prompt',
-                'mpc_waypoints_json',
-            ]
+            header = list(expected_header_cols)
             for i in range(LABEL_WAYPOINT_COUNT):
                 header += [f'wp{i}_x', f'wp{i}_y', f'wp{i}_z']
             self._csv_writer.writerow(header)
             self._csv_fp.flush()
+        else:
+            try:
+                with out_path.open('r') as fp:
+                    first_line = fp.readline()
+            except OSError:
+                first_line = ''
+            if not all(col in first_line for col in expected_header_cols):
+                self.get_logger().warn(
+                    'Existing output_csv appears to use an older schema. '
+                    'Use a fresh output file for the selected label_mode.'
+                )
 
     @staticmethod
     def stamp_to_sec(stamp) -> float:
@@ -223,6 +287,9 @@ class SyncDatasetGenerator(Node):
     @staticmethod
     def px4_stamp_us_to_sec(stamp_us: int | float) -> float:
         return float(stamp_us) * 1e-6
+
+    def _now_s(self) -> float:
+        return float(self.get_clock().now().nanoseconds) * 1e-9
 
     @staticmethod
     def quaternion_to_rotation_matrix(w, x, y, z):
@@ -258,7 +325,9 @@ class SyncDatasetGenerator(Node):
         return best, best_dt
 
     def odometry_callback(self, msg: Odometry) -> None:
-        stamp_s = self.stamp_to_sec(msg.header.stamp)
+        # Match by local receipt time so all streams share one clock domain,
+        # even when publishers use mixed wall/sim/PX4 time bases.
+        stamp_s = self._now_s()
         q = msg.pose.pose.orientation
         self.odom_buffer.append({
             'stamp_s': stamp_s,
@@ -268,8 +337,10 @@ class SyncDatasetGenerator(Node):
         })
 
     def vehicle_odometry_callback(self, msg: VehicleOdometry) -> None:
-        stamp_us = int(msg.timestamp_sample if getattr(msg, 'timestamp_sample', 0) else msg.timestamp)
-        stamp_s = self.px4_stamp_us_to_sec(stamp_us)
+        # PX4 timestamps are often boot-relative and do not share a clock domain
+        # with ROS header stamps from depth images and planner labels. Use the ROS
+        # receipt time so all sync buffers operate on one clock.
+        stamp_s = self._now_s()
         self.odom_buffer.append({
             'stamp_s': stamp_s,
             'position': np.array([float(msg.position[0]), float(msg.position[1]), float(msg.position[2])], dtype=float),
@@ -290,7 +361,9 @@ class SyncDatasetGenerator(Node):
             self.get_logger().warn(f'Depth decode error: {e}')
             return
 
-        depth_stamp_s = self.stamp_to_sec(msg.header.stamp)
+        # Use receipt time here as well; depth header stamps may be in sim time
+        # while the local node clock is in wall time, or vice versa.
+        depth_stamp_s = self._now_s()
         odom, dt = self._find_nearest_by_stamp(self.odom_buffer, depth_stamp_s, self.max_odom_sync_dt_s)
         if odom is None:
             self.get_logger().warn(
@@ -317,23 +390,20 @@ class SyncDatasetGenerator(Node):
             'local_obstacle_snapshot': self.local_obstacle_map.snapshot(),
         })
 
-    def mpc_trajectory_sequence_callback(self, msg: RosPath) -> None:
+    def fresh_committed_waypoint_callback(self, msg: PoseStamped) -> None:
         self.labels_seen += 1
-        label_stamp_s = self.stamp_to_sec(msg.header.stamp)
+        self.pending_anchors.append({
+            'stamp_s': self._now_s(),
+        })
+        self._flush_ready_samples()
+
+    def local_prediction_callback(self, msg: RosPath) -> None:
+        self.labels_seen += 1
+        anchor_stamp_s = self._now_s()
         if len(msg.poses) < LABEL_WAYPOINT_COUNT:
             self.labels_dropped += 1
             self.get_logger().warn(
-                f'Dropped label: expected {LABEL_WAYPOINT_COUNT} waypoints, got {len(msg.poses)}'
-            )
-            return
-
-        scene, dt = self._find_nearest_by_stamp(self.scene_buffer, label_stamp_s, self.max_label_sync_dt_s)
-        if scene is None:
-            self.labels_dropped += 1
-            self.get_logger().warn(
-                f'Dropped label: no scene match within {self.max_label_sync_dt_s:.3f}s '
-                f'(nearest_dt={dt if dt is not None else -1:.3f}s)',
-                throttle_duration_sec=1.0,
+                f'Dropped label: expected {LABEL_WAYPOINT_COUNT} prediction waypoints, got {len(msg.poses)}'
             )
             return
 
@@ -344,6 +414,75 @@ class SyncDatasetGenerator(Node):
                 float(pose.pose.position.y),
                 float(pose.pose.position.z),
             ])
+        self._write_sample(anchor_stamp_s, label_waypoints, LABEL_MODE_LOCAL_PREDICTION)
+
+    def executed_committed_waypoint_callback(self, msg: PoseStamped) -> None:
+        self.executed_waypoint_buffer.append({
+            'stamp_s': self._now_s(),
+            'position': np.array([
+                float(msg.pose.position.x),
+                float(msg.pose.position.y),
+                float(msg.pose.position.z),
+            ], dtype=float),
+        })
+        self._flush_ready_samples()
+
+    def _executed_window_for_anchor(self, anchor_stamp_s: float):
+        if not self.executed_waypoint_buffer:
+            return 'waiting', None
+
+        executed = list(self.executed_waypoint_buffer)
+        active_idx = None
+        for idx, item in enumerate(executed):
+            if float(item['stamp_s']) <= float(anchor_stamp_s):
+                active_idx = idx
+            else:
+                break
+
+        if active_idx is None:
+            return 'missing_past', None
+
+        end_idx = active_idx + LABEL_WAYPOINT_COUNT
+        if end_idx > len(executed):
+            return 'waiting', None
+
+        return 'ready', executed[active_idx:end_idx]
+
+    def _flush_ready_samples(self) -> None:
+        while self.pending_anchors:
+            anchor = self.pending_anchors[0]
+            anchor_stamp_s = float(anchor['stamp_s'])
+            window_status, executed_window = self._executed_window_for_anchor(anchor_stamp_s)
+            if window_status == 'waiting':
+                return
+
+            self.pending_anchors.popleft()
+            if window_status == 'missing_past':
+                self.labels_dropped += 1
+                self.get_logger().warn(
+                    f'Dropped label: no executed committed waypoint was active at anchor time '
+                    f'{anchor_stamp_s:.3f}s',
+                    throttle_duration_sec=1.0,
+                )
+                continue
+
+            label_waypoints = [item['position'].tolist() for item in executed_window]
+            self._write_sample(anchor_stamp_s, label_waypoints, LABEL_MODE_EXECUTED)
+
+    def _write_sample(self, anchor_stamp_s: float, label_waypoints: list[list[float]], label_mode: str) -> None:
+        scene, dt = self._find_nearest_by_stamp(
+            self.scene_buffer,
+            anchor_stamp_s,
+            self.max_label_sync_dt_s,
+        )
+        if scene is None:
+            self.labels_dropped += 1
+            self.get_logger().warn(
+                f'Dropped label: no scene match within {self.max_label_sync_dt_s:.3f}s '
+                f'(nearest_dt={dt if dt is not None else -1:.3f}s)',
+                throttle_duration_sec=1.0,
+            )
+            return
 
         env_vector = self.build_environment_vector_from_scene(scene)
         if env_vector is None:
@@ -352,13 +491,15 @@ class SyncDatasetGenerator(Node):
             return
         env_text = translate_vector_to_nlp(env_vector)
         user_prompt = compose_final_prompt(env_vector, env_text)
+        label_response = self._build_label_response(label_waypoints, label_mode, scene)
 
         row = [
-            f'{label_stamp_s:.9f}',
+            f'{anchor_stamp_s:.9f}',
             f'{scene["stamp_s"]:.9f}',
-            f'{1000.0 * abs(label_stamp_s - scene["stamp_s"]):.3f}',
+            f'{1000.0 * abs(anchor_stamp_s - scene["stamp_s"]):.3f}',
+            label_mode,
             user_prompt,
-            json.dumps(label_waypoints),
+            json.dumps(label_response, separators=(',', ':')),
         ]
         for p in label_waypoints:
             row += [p[0], p[1], p[2]]
@@ -367,7 +508,88 @@ class SyncDatasetGenerator(Node):
         self.rows_written += 1
 
         self.get_logger().info(
-            f'Wrote sample #{self.rows_written} | sync_dt={1000.0 * abs(label_stamp_s - scene["stamp_s"]):.1f} ms'
+            f'Wrote sample #{self.rows_written} | mode={label_mode} | '
+            f'sync_dt={1000.0 * abs(anchor_stamp_s - scene["stamp_s"]):.1f} ms'
+        )
+
+    def _build_label_response(self, label_waypoints: list[list[float]], label_mode: str, scene: dict) -> dict:
+        base_response = {
+            'waypoints': [
+                {
+                    'x': float(p[0]),
+                    'y': float(p[1]),
+                    'z': float(p[2]),
+                }
+                for p in label_waypoints
+            ],
+            'selected_waypoint_index': 0,
+        }
+        eval_result = evaluate_response(
+            current_position_ned=np.asarray(scene['position'], dtype=float),
+            goal_ned=np.asarray(self.goal, dtype=float),
+            llm_response_text=json.dumps(base_response, separators=(',', ':')),
+            obstacle_points_ned=np.asarray(scene['local_obstacle_snapshot'], dtype=float),
+            dt=self.eval_dt_s,
+            v_max=self.eval_v_max_mps,
+            a_max=self.eval_a_max_mps2,
+            safety_radius=self.eval_safety_radius_m,
+        )
+        mode_reasoning = {
+            LABEL_MODE_LOCAL_PREDICTION: 'This is the 5-step MPC local prediction aligned to the scene timestamp.',
+            LABEL_MODE_EXECUTED: 'This is the 5-step committed MPC rollout that was actually executed after the solve.',
+        }
+        base_response['reasoning'] = self._build_label_reasoning(
+            eval_result,
+            mode_reasoning.get(
+                label_mode,
+                'This is the 5-step MPC waypoint rollout aligned to the prompt scene.',
+            ),
+        )
+        base_response['evaluation'] = {
+            'passed': bool(eval_result.passed),
+            'format_pass': bool(eval_result.format_pass),
+            'kinematic_pass': bool(eval_result.kinematic_pass),
+            'progress_pass': bool(eval_result.progress_pass),
+            'safety_pass': bool(eval_result.safety_pass),
+            'errors': list(eval_result.errors),
+            'warnings': list(eval_result.warnings),
+            'metrics': _sanitize_for_json(eval_result.metrics),
+        }
+        return base_response
+
+    @staticmethod
+    def _build_label_reasoning(eval_result: EvalResult, prefix: str) -> str:
+        metrics = eval_result.metrics or {}
+        progress_selected = float(metrics.get('progress_selected_m', 0.0))
+        progress_final = float(metrics.get('progress_final_m', 0.0))
+        max_speed = float(metrics.get('max_speed_mps', 0.0))
+        max_accel = float(metrics.get('max_accel_mps2', 0.0))
+        min_clearance = metrics.get('min_clearance_m', None)
+        clearance_is_proxy = bool(metrics.get('clearance_is_proxy', True))
+        monotone_goal_progress = bool(metrics.get('monotone_goal_progress', False))
+
+        if clearance_is_proxy or min_clearance is None:
+            clearance_text = 'Obstacle clearance could not be measured from a local obstacle snapshot.'
+        else:
+            clearance_text = f'The rollout maintains about {float(min_clearance):.2f} m minimum obstacle clearance.'
+
+        status_text = (
+            'It passes the evaluator checks for format, kinematics, goal progress, and safety.'
+            if eval_result.passed else
+            'It is kept as the MPC label, but the evaluator flagged one or more checks that should be reviewed.'
+        )
+        monotone_text = (
+            'Goal distance decreases monotonically across the 5-waypoint sequence.'
+            if monotone_goal_progress else
+            'Goal distance does not decrease monotonically across the full 5-waypoint sequence.'
+        )
+        warning_text = f' Primary warning: {eval_result.warnings[0]}' if eval_result.warnings else ''
+
+        return (
+            f'{prefix} Waypoint 0 is selected because execution starts from the first step of the rollout. '
+            f'It reduces goal distance by {progress_selected:.2f} m immediately and by {progress_final:.2f} m by the final waypoint. '
+            f'The rollout reaches max speed {max_speed:.2f} m/s and max acceleration {max_accel:.2f} m/s^2. '
+            f'{clearance_text} {monotone_text} {status_text}{warning_text}'
         )
 
     def build_environment_vector_from_scene(self, scene: dict) -> dict | None:

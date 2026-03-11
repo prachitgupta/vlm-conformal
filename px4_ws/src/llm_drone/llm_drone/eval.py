@@ -26,17 +26,7 @@ from typing import Any
 import numpy as np
 
 
-DEFAULT_LLM_RESPONSE = """{
-  "waypoints": [
-    {"x": -0.5, "y": 11.7, "z": -2.8},
-    {"x": 0.7, "y": 11.2, "z": -2.7},
-    {"x": 1.9, "y": 10.6, "z": -2.6},
-    {"x": 3.1, "y": 10.0, "z": -2.5},
-    {"x": 4.3, "y": 9.4, "z": -2.4}
-  ],
-  "selected_waypoint_index": 0,
-  "reasoning": "First waypoint within 1 m of current position, spacing ~1.2 m per step, progressing north toward goal while reducing east offset smoothly."
-}"""
+DEFAULT_LLM_RESPONSE = """{"waypoints":[{"x":1.25,"y":0.41,"z":-2.43},{"x":2.65,"y":0.52,"z":-2.43},{"x":4.05,"y":0.63,"z":-2.43},{"x":5.45,"y":0.74,"z":-2.42},{"x":6.85,"y":0.84,"z":-2.42}],"selected_waypoint_index":0,"reasoning":"Clear center corridor with nearest obstacle off far left, so use a smooth straight 5-point trajectory toward the goal while maintaining safe altitude."}"""
 
 
 @dataclass

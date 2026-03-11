@@ -26,6 +26,7 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import json
+from collections import deque
 try:
     from openai import OpenAI
 except ImportError:
@@ -57,7 +58,7 @@ except ImportError:
     HAS_PX4_MSGS = False
 
 
-LLM_WAYPOINT_COUNT = 2
+LLM_WAYPOINT_COUNT = 5
 
 
 class LocalObstacleMap:
@@ -203,6 +204,7 @@ class LLMTrajectoryPlanner(Node):
         # Trajectory storage
         self.llm_trajectory = []
         self.mpc_trajectory = []
+        self.pending_waypoints = deque()
         
         # Subscribers
         if HAS_PX4_MSGS:
@@ -450,7 +452,7 @@ class LLMTrajectoryPlanner(Node):
         return vector
 
     def plan_trajectory(self):
-        """Query LLM for next trajectory point"""
+        """Execute a queued LLM rollout, or query a fresh 5-waypoint rollout when empty."""
         
         # Check if we have all data
         if self.depth_image is None:
@@ -464,41 +466,48 @@ class LLMTrajectoryPlanner(Node):
             self.publish_zero_velocity()
             return
         
-        # Query LLM
         try:
-            next_position, llm_waypoints = self.query_llm()
-            
-            if next_position is not None:
-                # Store trajectory
-                self.llm_trajectory.append(next_position)
-
-                # Publish timestamped single-point + short waypoint sequence using same tick time.
-                now_ros = self.get_clock().now()
-                stamp_msg = now_ros.to_msg()
-                traj_msg = PoseStamped()
-                traj_msg.header.stamp = stamp_msg
-                traj_msg.header.frame_id = 'ned'
-                traj_msg.pose.position.x = next_position[0]
-                traj_msg.pose.position.y = next_position[1]
-                traj_msg.pose.position.z = next_position[2]
-                traj_msg.pose.orientation.w = 1.0
-                self.llm_traj_pub.publish(traj_msg)
-                self.publish_llm_trajectory_sequence(llm_waypoints, stamp_msg)
-                
-                # Publish control command to PX4
-                if HAS_PX4_MSGS:
-                    self.publish_trajectory_setpoint(next_position)
-                else:
-                    velocity = self.compute_velocity_command(next_position)
-                    self.publish_velocity(velocity)
-                
-                # Compute error if MPC data available
-                if len(self.mpc_trajectory) > 0:
-                    error = self.compute_trajectory_error()
-                    self.get_logger().info(
-                        f'LLM vs MPC error: {error:.3f}m',
-                        throttle_duration_sec=1.0
+            if not self.pending_waypoints:
+                llm_waypoints = self.query_llm()
+                if llm_waypoints:
+                    self.pending_waypoints.extend(llm_waypoints)
+                    self.publish_llm_trajectory_sequence(
+                        llm_waypoints,
+                        self.get_clock().now().to_msg(),
                     )
+                    self.get_logger().info(
+                        f'Loaded {len(llm_waypoints)}-waypoint LLM rollout for execution'
+                    )
+
+            if not self.pending_waypoints:
+                return
+
+            next_position = np.array(self.pending_waypoints.popleft(), dtype=float, copy=True)
+            self.llm_trajectory.append(next_position)
+
+            now_ros = self.get_clock().now()
+            stamp_msg = now_ros.to_msg()
+            traj_msg = PoseStamped()
+            traj_msg.header.stamp = stamp_msg
+            traj_msg.header.frame_id = 'ned'
+            traj_msg.pose.position.x = next_position[0]
+            traj_msg.pose.position.y = next_position[1]
+            traj_msg.pose.position.z = next_position[2]
+            traj_msg.pose.orientation.w = 1.0
+            self.llm_traj_pub.publish(traj_msg)
+
+            if HAS_PX4_MSGS:
+                self.publish_trajectory_setpoint(next_position)
+            else:
+                velocity = self.compute_velocity_command(next_position)
+                self.publish_velocity(velocity)
+
+            if len(self.mpc_trajectory) > 0:
+                error = self.compute_trajectory_error()
+                self.get_logger().info(
+                    f'LLM vs MPC error: {error:.3f}m',
+                    throttle_duration_sec=1.0
+                )
                 
         except Exception as e:
             self.get_logger().error(f'LLM query failed: {e}')
@@ -579,11 +588,11 @@ class LLMTrajectoryPlanner(Node):
                 raise ValueError("Missing required 'waypoints' schema; fallback single-point schema disabled")
 
             self.get_logger().info(f"Reasoning: {data.get('reasoning', 'N/A')}")
-            return next_position, llm_waypoints
+            return llm_waypoints
             
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             self.get_logger().error(f'Failed to parse LLM response: {e}')
-            return None, None
+            return None
 
     def publish_llm_trajectory_sequence(self, waypoints_ned, stamp_msg):
         """Publish the full LLM waypoint rollout used for comparison and debugging."""
