@@ -45,7 +45,6 @@ from llm_drone.llm_prompt_common import (
     LLM_PLANNER_PROMPT_FILENAME,
     DEFAULT_SYSTEM_PROMPT,
     build_environment_vector,
-    compose_final_prompt,
     load_system_prompt,
     resolve_prompt_file,
     translate_vector_to_nlp,
@@ -564,8 +563,8 @@ class LLMTrajectoryPlanner(Node):
         env_vector = self.build_environment_vector()
         env_text = translate_vector_to_nlp(env_vector)
 
-        # Compose final prompt = fixed prompt + translated environment block + vector
-        user_message = compose_final_prompt(env_vector, env_text)
+        # Keep inference aligned with dataset/training: NLV-only user prompt, no explicit env vector dump.
+        user_message = env_text.strip()
 
         provider = str(self.get_parameter('llm_provider').value).strip().lower()
         if provider == 'openai':
