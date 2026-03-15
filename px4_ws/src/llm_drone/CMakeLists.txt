@@ -59,11 +59,11 @@ install(PROGRAMS
   scripts/performance_analyzer
   scripts/dataset_generator
   scripts/dataset_generator_sync
-  scripts/dataset_genrator_executer
+  scripts/dataset_generator_executor
   scripts/debug_pointcloud_obstacles
   scripts/eval_llm
   scripts/generate_synthetic_prompts
-  scripts/ground_truth_genrator
+  scripts/ground_truth_generator
   DESTINATION lib/${PROJECT_NAME}
 )
 

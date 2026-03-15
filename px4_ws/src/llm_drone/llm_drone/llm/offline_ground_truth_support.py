@@ -32,6 +32,8 @@ DEFAULT_START_POSE_ENU = (0.0, 0.0, DEFAULT_FIXED_ALTITUDE_M, 0.0)
 DEFAULT_GLOBAL_OPT_ITERS = 7
 DEFAULT_GLOBAL_OPT_TRUST_M = 1.25
 DEFAULT_RESAMPLE_SPEED_FRACTION = 0.75
+DEFAULT_GLOBAL_OPT_MAX_SLACK_M = 1e-3
+DEFAULT_GLOBAL_OPT_TOTAL_SLACK_M = 5e-3
 
 
 @dataclass
@@ -1107,6 +1109,8 @@ def _solve_global_reference_path_xy(
         'iterations': 0,
         'accepted_iterations': 0,
         'status': 'astar_only_fallback',
+        'max_slack_m': float('inf'),
+        'total_slack_m': float('inf'),
     }
     if init_path_xy.shape[0] <= 1 or cp is None:
         return np.array(init_path_xy, dtype=float, copy=True), metadata
@@ -1124,6 +1128,9 @@ def _solve_global_reference_path_xy(
     trust_region_m = max(float(initial_trust_region_m), max(0.25, float(grid_resolution_m)))
     target_clearance_m = float(planner_clearance_m)
     sample_spacing_m = max(0.05, min(float(grid_resolution_m), 0.25))
+    slack_penalty = 2_000.0
+    slack_max_tol = float(DEFAULT_GLOBAL_OPT_MAX_SLACK_M)
+    slack_total_tol = float(DEFAULT_GLOBAL_OPT_TOTAL_SLACK_M)
 
     for iteration in range(int(max_iters)):
         metadata['iterations'] = int(iteration + 1)
@@ -1163,12 +1170,12 @@ def _solve_global_reference_path_xy(
 
         objective_terms = [
             0.25 * cp.sum_squares(control),
-            4.0 * cp.sum_squares(state[1:-1, :2] - init_path_xy[1:-1]),
+            1.5 * cp.sum_squares(state[1:-1, :2] - init_path_xy[1:-1]),
             0.15 * cp.sum_squares(state[:, 2:4]),
             20.0 * cp.sum_squares(state[-1, 2:4]),
         ]
         if slack is not None:
-            objective_terms.append(500.0 * cp.sum(slack))
+            objective_terms.append(float(slack_penalty) * cp.sum(slack))
         problem = cp.Problem(cp.Minimize(sum(objective_terms)), constraints)
 
         solved = False
@@ -1189,9 +1196,16 @@ def _solve_global_reference_path_xy(
             continue
 
         candidate_states = np.asarray(state.value, dtype=float)
-        candidate_controls = np.asarray(control.value, dtype=float)
+        candidate_controls = np.asarray(control.value, dtype=float) if control.value is not None else np.zeros((0, 2))
         candidate_positions = np.asarray(candidate_states[:, :2], dtype=float)
         candidate_clearance = min_signed_distance_to_obstacles(candidate_positions, obstacles)
+        if slack is not None and slack.value is not None:
+            candidate_slack = np.asarray(slack.value, dtype=float)
+            max_slack = float(np.max(candidate_slack)) if candidate_slack.size > 0 else 0.0
+            total_slack = float(np.sum(candidate_slack))
+        else:
+            max_slack = 0.0
+            total_slack = 0.0
         collision_free = polyline_is_collision_free(
             candidate_positions,
             obstacles,
@@ -1199,8 +1213,12 @@ def _solve_global_reference_path_xy(
             sample_spacing_m=sample_spacing_m,
         )
         metadata['status'] = str(solver_status)
+        metadata['max_slack_m'] = float(max_slack)
+        metadata['total_slack_m'] = float(total_slack)
 
-        if collision_free:
+        slack_feasible = max_slack <= slack_max_tol and total_slack <= slack_total_tol
+
+        if collision_free and slack_feasible:
             metadata['accepted_iterations'] = int(metadata['accepted_iterations']) + 1
             position_step = float(np.max(np.linalg.norm(candidate_positions - warm_positions, axis=1)))
             warm_positions = candidate_positions
@@ -1209,10 +1227,24 @@ def _solve_global_reference_path_xy(
             best_positions = np.array(candidate_positions, dtype=float, copy=True)
             best_clearance = candidate_clearance
             trust_region_m = min(max(0.5, trust_region_m * 1.15), 3.0)
+            slack_penalty = max(2_000.0, slack_penalty * 1.25)
             if position_step < 5e-3:
                 break
             continue
 
+        if collision_free and not slack_feasible:
+            metadata['status'] = 'rejected_nonzero_slack'
+            slack_penalty *= 8.0
+            trust_region_m = max(0.25, trust_region_m * 0.7)
+            continue
+
+        if not collision_free and total_slack <= slack_total_tol * 2.0:
+            metadata['status'] = 'rejected_postcheck_collision'
+            slack_penalty *= 6.0
+            trust_region_m = max(0.25, trust_region_m * 0.6)
+            continue
+
+        slack_penalty *= 10.0
         trust_region_m = max(0.25, trust_region_m * 0.5)
 
     metadata['final_min_signed_distance_m'] = float(best_clearance)

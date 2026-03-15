@@ -6,6 +6,13 @@ import math
 from pathlib import Path
 
 import rclpy
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+except Exception:
+    matplotlib = None
+    plt = None
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path as RosPath
 from rclpy.node import Node
@@ -42,7 +49,7 @@ DEFAULT_OUTPUT_ROOT = str((Path(__file__).resolve().parents[2] / 'generated' / '
 
 class GroundTruthGenerator(Node):
     def __init__(self):
-        super().__init__('ground_truth_genrator')
+        super().__init__('ground_truth_generator')
 
         self.declare_parameter('manifest_json', '')
         self.declare_parameter('world_sdf_path', '')
@@ -74,6 +81,7 @@ class GroundTruthGenerator(Node):
         self.manifest_output_dir = self._resolve_dir('manifest_output_dir', self.output_root / 'manifests')
         self.trajectory_output_dir = self._resolve_dir('trajectory_output_dir', self.output_root / 'trajectories')
         self.env_output_dir = self._resolve_dir('env_output_dir', self.output_root / 'env')
+        self.plot_output_dir = self.output_root / 'plots'
         self.template_world_path = Path(str(self.get_parameter('template_world_path').value)).expanduser().resolve()
 
         self.generated_artifacts: list[dict] = []
@@ -101,6 +109,7 @@ class GroundTruthGenerator(Node):
             write_json(trajectory_path, artifact)
             env_path.parent.mkdir(parents=True, exist_ok=True)
             env_path.write_text(env_file_text(manifest))
+            plot_path = self._save_trajectory_plot(manifest, trajectory)
 
             self.generated_artifacts.append({
                 'manifest': manifest,
@@ -108,9 +117,10 @@ class GroundTruthGenerator(Node):
                 'manifest_path': manifest_path,
                 'trajectory_path': trajectory_path,
                 'env_path': env_path,
+                'plot_path': plot_path,
             })
             self.get_logger().info(
-                f'Generated {manifest.world_name}: manifest={manifest_path} trajectory={trajectory_path} env={env_path}'
+                f'Generated {manifest.world_name}: manifest={manifest_path} trajectory={trajectory_path} env={env_path} plot={plot_path}'
             )
 
         publish_scenario_id = str(self.get_parameter('publish_scenario_id').value).strip()
@@ -211,6 +221,79 @@ class GroundTruthGenerator(Node):
             f'publish_scenario_id={scenario_id!r} not found; publishing first generated artifact instead.'
         )
         return self.generated_artifacts[0]
+
+    def _save_trajectory_plot(self, manifest: ScenarioManifest, trajectory: dict) -> Path:
+        plot_path = self.plot_output_dir / f'{manifest.world_name}.png'
+        if plt is None or matplotlib is None:
+            return plot_path
+
+        self.plot_output_dir.mkdir(parents=True, exist_ok=True)
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        try:
+            for obstacle in manifest.obstacles:
+                if obstacle.kind == 'cylinder' and obstacle.radius is not None:
+                    patch = plt.Circle(
+                        (float(obstacle.position.x), float(obstacle.position.y)),
+                        float(obstacle.radius),
+                        facecolor='0.85',
+                        edgecolor='0.45',
+                        linewidth=0.8,
+                    )
+                    ax.add_patch(patch)
+                elif obstacle.kind == 'box' and obstacle.size is not None:
+                    width = float(obstacle.size[0])
+                    height = float(obstacle.size[1])
+                    patch = plt.Rectangle(
+                        (-0.5 * width, -0.5 * height),
+                        width,
+                        height,
+                        facecolor='0.85',
+                        edgecolor='0.45',
+                        linewidth=0.8,
+                    )
+                    transform = (
+                        matplotlib.transforms.Affine2D()
+                        .rotate(float(obstacle.position.yaw))
+                        .translate(float(obstacle.position.x), float(obstacle.position.y))
+                    )
+                    patch.set_transform(transform + ax.transData)
+                    ax.add_patch(patch)
+
+            coarse_route = trajectory.get('coarse_route_enu', [])
+            if coarse_route:
+                ax.plot(
+                    [float(point['x']) for point in coarse_route],
+                    [float(point['y']) for point in coarse_route],
+                    '--',
+                    color='tab:blue',
+                    linewidth=1.2,
+                    label='A* init',
+                )
+
+            reference_path = trajectory.get('reference_path_enu', [])
+            if reference_path:
+                ax.plot(
+                    [float(point['x']) for point in reference_path],
+                    [float(point['y']) for point in reference_path],
+                    '-',
+                    color='tab:orange',
+                    linewidth=1.5,
+                    label='Global traj',
+                )
+
+            ax.plot(manifest.start_pose_enu.x, manifest.start_pose_enu.y, 'go', markersize=6, label='Start')
+            ax.plot(manifest.goal_pose_enu.x, manifest.goal_pose_enu.y, 'r*', markersize=10, label='Goal')
+            ax.set_title(manifest.world_name)
+            ax.set_xlabel('X [ENU m]')
+            ax.set_ylabel('Y [ENU m]')
+            ax.set_aspect('equal', adjustable='box')
+            ax.grid(True, alpha=0.25)
+            ax.legend(loc='best', fontsize=8)
+            fig.tight_layout()
+            fig.savefig(plot_path, dpi=140)
+        finally:
+            plt.close(fig)
+        return plot_path
 
     def _build_path_msg(self, trajectory: dict) -> RosPath:
         path = RosPath()

@@ -41,11 +41,11 @@ setup(
             'performance_analyzer = llm_drone.verifier.performance_analyse:main',
             'dataset_generator = llm_drone.mpc.dataset_generator:main',
             'dataset_generator_sync = llm_drone.llm.dataset_generator_sync:main',
-            'dataset_genrator_executer = llm_drone.llm.dataset_genrator_executer:main',
+            'dataset_generator_executor = llm_drone.llm.dataset_generator_executor:main',
             'debug_pointcloud_obstacles = llm_drone.verifier.debug_pointcloud_obstacles:main',
             'eval_llm = llm_drone.verifier.eval:main',
             'generate_synthetic_prompts = llm_drone.llm.generate_synthetic_prompts:main',
-            'ground_truth_genrator = llm_drone.llm.ground_truth_genrator:main',
+            'ground_truth_generator = llm_drone.llm.ground_truth_generator:main',
         ],
     },
 )

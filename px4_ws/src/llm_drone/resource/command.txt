@@ -5,3 +5,9 @@ CUDA_VISIBLE_DEVICES=1 vllm serve ~/vlm-conformal/px4_ws/src/llm_drone/models/qw
 vllm serve Qwen/Qwen2.5-1.5B-Instruct   --host 0.0.0.0   --port 8000   --dtype auto   --api-key token-abc123   --gpu-memory-utilization 0.1   --max-model-len 4096
 
 ROS_LOG_DIR=/tmp/roslog ros2 run llm_drone llm --ros-args   -p llm_provider:=vllm   -p vllm_url:=http://127.0.0.1:8000/v1/chat/completions   -p vllm_model:=Qwen/Qwen2.5-1.5B-Instruct   -p vllm_api_key:=token-abc123
+
+ros2 run llm_drone ground_truth_generator --ros-args -p world_sdf_path:=/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds/no_obs.sdf
+
+ros2 run llm_drone ground_truth_generator --ros-args -p world_sdf_glob:=/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds/*.sdf
+
+ros2 run llm_drone dataset_generator_executor --ros-args -p trajectory_json:=/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/trajectories/no_obs.json

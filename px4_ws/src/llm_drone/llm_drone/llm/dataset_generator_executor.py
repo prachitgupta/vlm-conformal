@@ -41,9 +41,9 @@ except ImportError:
 
 class DatasetGeneratorExecuter(Node):
     def __init__(self):
-        super().__init__('dataset_genrator_executer')
+        super().__init__('dataset_generator_executor')
         if not HAS_PX4_MSGS:
-            raise RuntimeError('px4_msgs is required for dataset_genrator_executer')
+            raise RuntimeError('px4_msgs is required for dataset_generator_executor')
 
         self.declare_parameter('trajectory_json', '')
         self.declare_parameter('output_csv', '../dataset/offline_ground_truth_dataset.csv')

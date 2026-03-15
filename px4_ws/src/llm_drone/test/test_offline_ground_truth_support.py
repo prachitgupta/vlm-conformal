@@ -251,6 +251,8 @@ def test_generate_reference_trajectory_smoke_single_blocker() -> None:
     points_enu_xy = np.array([[row['x'], row['y']] for row in trajectory['reference_path_enu']], dtype=float)
     assert np.linalg.norm(points_enu_xy[-1, :2] - np.array([8.0, 0.0], dtype=float)) <= 0.6
     assert trajectory['optimization_metadata']['planner_method'] == 'astar_initialization_global_qp'
+    assert trajectory['optimization_metadata']['accepted_iterations'] >= 1
+    assert trajectory['optimization_metadata']['max_slack_m'] <= 1e-3
     assert all(point_is_collision_free(point, scenario.obstacles, inflation_m=0.1) for point in points_enu_xy)
 
 
@@ -282,5 +284,7 @@ def test_generate_reference_trajectory_smoke_multi_obstacle_corridor() -> None:
     points_enu_xy = np.array([[row['x'], row['y']] for row in trajectory['reference_path_enu']], dtype=float)
     assert np.linalg.norm(points_enu_xy[-1, :2] - np.array([9.0, 1.0], dtype=float)) <= 0.7
     assert trajectory['optimization_metadata']['planner_method'] == 'astar_initialization_global_qp'
+    assert trajectory['optimization_metadata']['accepted_iterations'] >= 1
+    assert trajectory['optimization_metadata']['max_slack_m'] <= 1e-3
     assert all(point_is_collision_free(point, scenario.obstacles, inflation_m=0.1) for point in points_enu_xy)
     assert math.isclose(float(np.min(points[:, 2])), -2.5)

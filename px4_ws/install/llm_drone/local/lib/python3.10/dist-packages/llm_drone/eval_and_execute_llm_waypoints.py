@@ -1,1 +1,0 @@
-/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/llm_drone/eval_and_execute_llm_waypoints.py
