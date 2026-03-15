@@ -34,8 +34,8 @@ except ImportError:
 import os
 import urllib.request
 import urllib.error
-from llm_drone.cli_goal import parse_goal_overrides
-from llm_drone.llm_prompt_common import (
+from llm_drone.verifier.cli_goal import parse_goal_overrides
+from llm_drone.llm.llm_prompt_common import (
     DEPTH_HFOV_DEG,
     DEPTH_VFOV_DEG,
     DEPTH_MIN_M,
@@ -192,7 +192,7 @@ class LLMTrajectoryPlanner(Node):
         # Parameters
         self.declare_parameter('goal_x', 35.0)
         self.declare_parameter('goal_y', 3.0)
-        self.declare_parameter('goal_z', 2.5)
+        self.declare_parameter('goal_z', -2.5)
         self.declare_parameter('update_rate', 1.0)  # Hz
         # Supported providers: qwen (Ollama), vllm/tgis (OpenAI-compatible server), openai (cloud).
         self.declare_parameter('llm_provider', 'vllm')  # qwen, vllm/tgis, or openai
@@ -203,7 +203,7 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('vllm_model', 'Qwen/Qwen2.5-1.5B-Instruct')
         self.declare_parameter('vllm_api_key', 'token-abc123')
         self.declare_parameter('vllm_temperature', 0.3)
-        self.declare_parameter('vllm_max_tokens', 300)
+        self.declare_parameter('vllm_max_tokens', 400)
         self.declare_parameter('goal_frame', 'ned')  # gazebo(ENU) or ned
         self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
         
@@ -585,36 +585,31 @@ class LLMTrajectoryPlanner(Node):
             
             if isinstance(data, dict) and "waypoints" in data:
                 waypoints = data.get("waypoints", [])
-                selected_idx = int(data.get("selected_waypoint_index", 0))
                 if not isinstance(waypoints, list):
                     raise ValueError("waypoints must be a list")
                 if len(waypoints) != LLM_WAYPOINT_COUNT:
                     raise ValueError(
                         f"Expected exactly {LLM_WAYPOINT_COUNT} waypoints, got {len(waypoints)}"
                     )
-                if selected_idx < 0 or selected_idx >= len(waypoints):
-                    raise ValueError("selected_waypoint_index out of range")
-                if selected_idx != 0:
-                    raise ValueError(
-                        f"selected_waypoint_index must be 0 for {LLM_WAYPOINT_COUNT}-waypoint rollout execution"
-                    )
 
                 llm_waypoints = []
                 for i, pt in enumerate(waypoints):
-                    wp_xyz = np.array([
+                    wp_xy = np.array([
                         float(pt['x']),
                         float(pt['y']),
-                        float(pt['z'])
+                    ], dtype=float)
+                    if not np.all(np.isfinite(wp_xy)):
+                        raise ValueError(f"waypoint {i} contains non-finite x/y values")
+
+                    # The LLM predicts planar x/y only. z is injected from the fixed goal altitude.
+                    wp_xyz = np.array([
+                        float(wp_xy[0]),
+                        float(wp_xy[1]),
+                        float(self.goal[2]),
                     ], dtype=float)
                     if not np.all(np.isfinite(wp_xyz)):
                         raise ValueError(f"waypoint {i} contains non-finite values")
-                    if not np.isclose(wp_xyz[2], float(self.goal[2]), atol=1e-3):
-                        raise ValueError(
-                            f"waypoint {i} z={wp_xyz[2]:.3f} does not match required goal z={float(self.goal[2]):.3f}"
-                        )
                     llm_waypoints.append(wp_xyz)
-
-                next_position = llm_waypoints[selected_idx]
             else:
                 raise ValueError("Missing required 'waypoints' schema; fallback single-point schema disabled")
 
@@ -680,7 +675,7 @@ class LLMTrajectoryPlanner(Node):
             "prompt": qwen_prompt,
             "stream": False,
             "options": {
-                "temperature": 0.3,
+                "temperature": 0.1,
                 "num_predict": 300,
             },
         }

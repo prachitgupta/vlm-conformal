@@ -1,0 +1,7 @@
+ROS_LOG_DIR=/tmp/roslog ros2 run llm_drone llm --ros-args   -p llm_provider:=vllm   -p vllm_url:=http://127.0.0.1:8000/v1/chat/completions   -p vllm_model:=qwen25_7b_drone_planner   -p vllm_api_key:=token-abc123
+
+CUDA_VISIBLE_DEVICES=1 vllm serve ~/vlm-conformal/px4_ws/src/llm_drone/models/qwen25_7b_drone_planner  --served-model-name qwen25_7b_drone_planner  --host 0.0.0.0   --port 8000   --dtype bfloat16   --api-key token-abc123   --gpu-memory-utilization 0.75   --max-model-len 4096
+
+vllm serve Qwen/Qwen2.5-1.5B-Instruct   --host 0.0.0.0   --port 8000   --dtype auto   --api-key token-abc123   --gpu-memory-utilization 0.1   --max-model-len 4096
+
+ROS_LOG_DIR=/tmp/roslog ros2 run llm_drone llm --ros-args   -p llm_provider:=vllm   -p vllm_url:=http://127.0.0.1:8000/v1/chat/completions   -p vllm_model:=Qwen/Qwen2.5-1.5B-Instruct   -p vllm_api_key:=token-abc123

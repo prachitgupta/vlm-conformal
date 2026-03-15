@@ -6,10 +6,9 @@ Records a timestamped prompt .txt every N seconds (default 2s) using real-time:
   - /depth_camera (sensor_msgs/Image)
   - /fmu/out/vehicle_odometry (px4_msgs/VehicleOdometry or nav_msgs/Odometry fallback)
 
-Prompt structure mirrors llm_planner.py:
-  1) system prompt loaded from ../config/llm_planner_prompt.txt
-  2) deterministic environment summary T(v)
-  3) numerical environment vector v
+Prompt structure mirrors the active planner:
+  1) system prompt loaded from the active 2D prompt file
+  2) deterministic natural-language environment summary T(v)
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
-from llm_drone.llm_prompt_common import (
+from llm_drone.llm.llm_prompt_common import (
     DEPTH_HFOV_DEG,
     DEPTH_VFOV_DEG,
     DEPTH_MIN_M,
@@ -34,9 +33,10 @@ from llm_drone.llm_prompt_common import (
     MPC_DEPTH_SAMPLE_COUNT,
     LLM_PLANNER_PROMPT_FILENAME,
     build_environment_vector,
-    compose_final_prompt,
+    compose_user_prompt,
     load_system_prompt_from_path,
     resolve_prompt_file,
+    serialize_prompt_bundle,
     translate_vector_to_nlp,
 )
 
@@ -48,7 +48,7 @@ except ImportError:
 
 DEFAULT_PROMPT_FILE = resolve_prompt_file(LLM_PLANNER_PROMPT_FILENAME)
 DEFAULT_OUTPUT_DIR = (Path(__file__).resolve().parent / "../config/test2_prompt_samples").resolve()
-LLM_WAYPOINT_COUNT = 2
+LLM_WAYPOINT_COUNT = 5
 
 
 class LocalObstacleMap:
@@ -283,7 +283,7 @@ class LivePromptRecorder(Node):
             return
 
         env_text = translate_vector_to_nlp(env_vector)
-        user_prompt = compose_final_prompt(env_vector, env_text)
+        user_prompt = compose_user_prompt(env_text)
 
         now = datetime.now(timezone.utc)
         ts_utc = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -292,10 +292,7 @@ class LivePromptRecorder(Node):
 
         text = (
             f"timestamp_utc: {ts_utc}\n\n"
-            "=== SYSTEM PROMPT ===\n"
-            f"{self.system_prompt.rstrip()}\n\n"
-            "=== USER PROMPT ===\n"
-            f"{user_prompt}"
+            f"{serialize_prompt_bundle(self.system_prompt, user_prompt)}"
         )
         out_path.write_text(text)
         self.write_count += 1

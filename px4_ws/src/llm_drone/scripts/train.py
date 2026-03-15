@@ -61,13 +61,26 @@ from unsloth import FastLanguageModel
 from trl import SFTTrainer, SFTConfig
 
 try:
-    from llm_drone.llm_prompt_common import DATASET_PROMPT_FILENAME, load_system_prompt
+    from llm_drone.llm.llm_prompt_common import (
+        DATASET_PROMPT_FILENAME,
+        load_system_prompt,
+        split_prompt_bundle,
+    )
 except ImportError:
-    DATASET_PROMPT_FILENAME = "llm_prompt.txt"
+    DATASET_PROMPT_FILENAME = "llm_prompt2d.txt"
 
     def load_system_prompt(prompt_filename: str) -> str:
         prompt_path = (Path(__file__).resolve().parents[1] / "config" / prompt_filename).resolve()
         return prompt_path.read_text() if prompt_path.exists() else ""
+
+    def split_prompt_bundle(prompt_text: str, fallback_system_prompt: str = "") -> tuple[str, str]:
+        text = str(prompt_text or "").strip()
+        system_marker = "=== SYSTEM PROMPT ===\n"
+        user_marker = "\n\n=== USER PROMPT ===\n"
+        if text.startswith(system_marker) and user_marker in text:
+            system_text, _, user_text = text[len(system_marker):].partition(user_marker)
+            return system_text.strip(), user_text.strip()
+        return str(fallback_system_prompt or "").strip(), text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -320,21 +333,21 @@ def validate_completion(completion_str: str) -> bool:
     if len(waypoints) != 5:
         return False
 
-    selected_idx = data.get("selected_waypoint_index", 0)
-    if "selected_waypoint_index" in data:
-        if not isinstance(selected_idx, int):
-            return False
-        if selected_idx < 0 or selected_idx >= len(waypoints):
-            return False
-
-    # Each waypoint must have x, y, z as finite numbers
+    # Each waypoint must have x and y as finite numbers. z may be present in
+    # older rows but is no longer part of the model-facing contract.
     for wp in waypoints:
         if not isinstance(wp, dict):
             return False
-        for key in ["x", "y", "z"]:
+        for key in ["x", "y"]:
             if key not in wp:
                 return False
             val = wp[key]
+            if not isinstance(val, (int, float)):
+                return False
+            if not torch.tensor(val).isfinite():
+                return False
+        if "z" in wp:
+            val = wp["z"]
             if not isinstance(val, (int, float)):
                 return False
             if not torch.tensor(val).isfinite():
@@ -358,16 +371,20 @@ def normalize_completion_for_training(completion_str: str) -> str:
     """
     data = json.loads(completion_str)
     normalized = {
-        "waypoints": data["waypoints"],
+        "waypoints": [
+            {"x": float(wp["x"]), "y": float(wp["y"])}
+            for wp in data["waypoints"]
+        ],
         "reasoning": str(data.get("reasoning", "")).strip(),
     }
     return json.dumps(normalized, separators=(",", ":"))
 
 
-def extract_user_and_assistant_messages(messages: list[dict]) -> tuple[str | None, str | None]:
+def extract_chat_messages(messages: list[dict]) -> tuple[str | None, str | None, str | None]:
+    system_content = next((m.get("content") for m in messages if m.get("role") == "system"), None)
     user_content = next((m.get("content") for m in messages if m.get("role") == "user"), None)
     assistant_content = next((m.get("content") for m in messages if m.get("role") == "assistant"), None)
-    return user_content, assistant_content
+    return system_content, user_content, assistant_content
 
 
 def iter_examples_from_jsonl(data_path: Path):
@@ -421,8 +438,9 @@ def load_and_prepare_dataset(cfg: TrainConfig) -> tuple[Dataset, Dataset]:
         else:
             example = raw_example
 
+        system_content = None
         if "messages" in example:
-            user_content, assistant_content = extract_user_and_assistant_messages(example["messages"])
+            system_content, user_content, assistant_content = extract_chat_messages(example["messages"])
         elif "prompt" in example and ("completion" in example or "label_waypoints_json" in example):
             user_content = example["prompt"]
             assistant_content = example.get("completion") or example.get("label_waypoints_json")
@@ -442,10 +460,12 @@ def load_and_prepare_dataset(cfg: TrainConfig) -> tuple[Dataset, Dataset]:
             continue
 
         assistant_content = normalize_completion_for_training(assistant_content)
+        fallback_system = system_content if isinstance(system_content, str) else SYSTEM_PROMPT
+        bundle_system, user_content = split_prompt_bundle(user_content, fallback_system_prompt=fallback_system)
 
         raw_examples.append({
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": bundle_system or fallback_system or SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
                 {"role": "assistant", "content": assistant_content},
             ]
@@ -693,8 +713,6 @@ class WaypointEvalCallback(TrainerCallback):
 
         valid_json = 0
         l2_errors = []
-        safety_violations = 0
-
         FastLanguageModel.for_inference(self.model)  # Switch to inference mode
 
         for sample in self.eval_samples:
@@ -740,15 +758,9 @@ class WaypointEvalCallback(TrainerCallback):
                     for p, g in zip(pred_wps, gt_wps):
                         dist = np.sqrt(
                             (p["x"] - g["x"])**2 +
-                            (p["y"] - g["y"])**2 +
-                            (p["z"] - g["z"])**2
+                            (p["y"] - g["y"])**2
                         )
                         l2_errors.append(dist)
-
-                # --- Metric 3: Safety check (z >= 0 means below ground) ---
-                for wp in pred_wps:
-                    if wp.get("z", -1) >= 0:
-                        safety_violations += 1
 
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass  # JSON invalid — already counted above
@@ -762,7 +774,6 @@ class WaypointEvalCallback(TrainerCallback):
 
         log.info(f"  JSON validity    : {json_rate:.1f}% ({valid_json}/{n})")
         log.info(f"  Mean L2 error    : {mean_l2:.3f} m")
-        log.info(f"  Safety violations: {safety_violations}")
 
         # Targets to aim for:
         #   JSON validity  > 95%

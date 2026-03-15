@@ -16,7 +16,7 @@ from typing import Any
 
 
 DEFAULT_MEMORY_PATH = Path("/tmp/llm_eval_memory.jsonl")
-DEFAULT_SYSTEM_PROMPT = (Path(__file__).resolve().parent / "../config/llm_prompt.txt").resolve()
+DEFAULT_SYSTEM_PROMPT = (Path(__file__).resolve().parent / "../config/llm_prompt2d.txt").resolve()
 DEFAULT_OUTPUT_DIR = (Path(__file__).resolve().parent / "../config/generated_synthetic_prompts").resolve()
 
 
@@ -85,11 +85,10 @@ def compose_refinement_prompt(system_prompt: str, mem: dict[str, Any]) -> str:
     sections.append(
         "=== REFINEMENT TASK ===\n"
         "Refine the waypoint response so it passes evaluation.\n"
-        "Output exactly one JSON object with keys: waypoints, selected_waypoint_index, reasoning.\n"
+        "Output exactly one JSON object with keys: waypoints, reasoning.\n"
         "Hard requirements:\n"
         "- waypoints must be exactly 5 items\n"
-        "- each waypoint has numeric x, y, z in NED meters\n"
-        "- selected_waypoint_index must be 0\n"
+        "- each waypoint has numeric x and y in NED meters\n"
         "- prioritize obstacle safety, goal progress, and smoothness\n"
         "- no markdown, no extra keys, no extra text"
     )

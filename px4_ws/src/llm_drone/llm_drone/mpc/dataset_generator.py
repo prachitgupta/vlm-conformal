@@ -20,7 +20,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 
-from llm_drone.cli_goal import parse_goal_overrides
+from llm_drone.verifier.cli_goal import parse_goal_overrides
 
 try:
     from px4_msgs.msg import VehicleOdometry

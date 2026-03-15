@@ -8,10 +8,42 @@ import csv
 import json
 from pathlib import Path
 
+try:
+    from llm_drone.llm.llm_prompt_common import (
+        DATASET_PROMPT_FILENAME,
+        load_system_prompt,
+        serialize_prompt_bundle,
+        split_prompt_bundle,
+    )
+except ImportError:
+    DATASET_PROMPT_FILENAME = 'llm_prompt2d.txt'
+
+    def load_system_prompt(prompt_filename: str) -> str:
+        prompt_path = (Path(__file__).resolve().parents[1] / 'config' / prompt_filename).resolve()
+        return prompt_path.read_text() if prompt_path.exists() else ''
+
+    def serialize_prompt_bundle(system_prompt: str, user_prompt: str) -> str:
+        return (
+            '=== SYSTEM PROMPT ===\n'
+            f'{str(system_prompt).strip()}\n\n'
+            '=== USER PROMPT ===\n'
+            f'{str(user_prompt).strip()}\n'
+        )
+
+    def split_prompt_bundle(prompt_text: str, fallback_system_prompt: str = '') -> tuple[str, str]:
+        text = str(prompt_text or '').strip()
+        system_marker = '=== SYSTEM PROMPT ===\n'
+        user_marker = '\n\n=== USER PROMPT ===\n'
+        if text.startswith(system_marker) and user_marker in text:
+            system_text, _, user_text = text[len(system_marker):].partition(user_marker)
+            return system_text.strip(), user_text.strip()
+        return str(fallback_system_prompt or '').strip(), text
+
 
 DEFAULT_INPUT = Path(__file__).resolve().parents[1] / 'dataset' / 'dataset.csv'
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[1] / 'dataset' / 'dataset_unsloth.txt'
 DEFAULT_RECORD_SEPARATOR = '\n\n<eos>\n\n'
+DEFAULT_SYSTEM_PROMPT = load_system_prompt(DATASET_PROMPT_FILENAME)
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,12 +75,10 @@ def normalize_response(raw_value: str) -> dict:
     parsed = json.loads(raw_value)
     if isinstance(parsed, dict) and 'waypoints' in parsed:
         waypoints = parsed['waypoints']
-        selected_idx = int(parsed.get('selected_waypoint_index', 0))
         reasoning = str(parsed.get('reasoning', '')).strip()
         evaluation = parsed.get('evaluation', None)
     elif isinstance(parsed, list):
         waypoints = parsed
-        selected_idx = 0
         reasoning = ''
         evaluation = None
     else:
@@ -59,18 +89,15 @@ def normalize_response(raw_value: str) -> dict:
         if isinstance(waypoint, dict):
             x = float(waypoint['x'])
             y = float(waypoint['y'])
-            z = float(waypoint['z'])
-        elif isinstance(waypoint, (list, tuple)) and len(waypoint) == 3:
+        elif isinstance(waypoint, (list, tuple)) and len(waypoint) >= 2:
             x = float(waypoint[0])
             y = float(waypoint[1])
-            z = float(waypoint[2])
         else:
             raise ValueError(f'Unsupported waypoint format at index {idx}')
-        normalized_waypoints.append({'x': x, 'y': y, 'z': z})
+        normalized_waypoints.append({'x': x, 'y': y})
 
     return {
         'waypoints': normalized_waypoints,
-        'selected_waypoint_index': selected_idx,
         'reasoning': reasoning,
         'evaluation': evaluation,
     }
@@ -84,7 +111,6 @@ def build_record(
 ) -> str:
     response_payload = {
         'waypoints': response_obj['waypoints'],
-        'selected_waypoint_index': int(response_obj['selected_waypoint_index']),
     }
     if include_reasoning:
         response_payload['reasoning'] = str(response_obj.get('reasoning', '')).strip()
@@ -99,6 +125,11 @@ def build_record(
     )
 
 
+def normalize_prompt(prompt: str) -> str:
+    system_prompt, user_prompt = split_prompt_bundle(prompt, fallback_system_prompt=DEFAULT_SYSTEM_PROMPT)
+    return serialize_prompt_bundle(system_prompt or DEFAULT_SYSTEM_PROMPT, user_prompt)
+
+
 def main() -> int:
     args = parse_args()
     input_csv = args.input_csv.expanduser().resolve()
@@ -111,7 +142,7 @@ def main() -> int:
     with input_csv.open('r', newline='') as fp:
         reader = csv.DictReader(fp)
         for row_idx, row in enumerate(reader, start=2):
-            prompt = (row.get('prompt') or '').strip()
+            prompt = normalize_prompt((row.get('prompt') or '').strip())
             raw_response = (row.get('label_waypoints_json') or '').strip()
             if not prompt or not raw_response:
                 continue

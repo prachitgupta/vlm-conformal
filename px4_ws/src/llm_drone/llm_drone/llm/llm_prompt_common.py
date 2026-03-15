@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import json
 from pathlib import Path
 
 import numpy as np
@@ -14,15 +12,21 @@ PROMPT_DEPTH_STATS_MAX_M = 20.0
 OBS_FIFO_LEN = 200
 MPC_DEPTH_SAMPLE_COUNT = 500
 
-LLM_PLANNER_PROMPT_FILENAME = 'llm_prompt.txt'
-DATASET_PROMPT_FILENAME = 'llm_prompt.txt'
+LLM_PLANNER_PROMPT_FILENAME = 'llm_prompt2d.txt'
+DATASET_PROMPT_FILENAME = 'llm_prompt2d.txt'
 DEFAULT_SYSTEM_PROMPT = "You are a drone motion planning system. Generate safe trajectories."
+PROMPT_BUNDLE_SYSTEM_MARKER = '=== SYSTEM PROMPT ==='
+PROMPT_BUNDLE_USER_MARKER = '=== USER PROMPT ==='
 
 
 def resolve_prompt_file(prompt_filename: str) -> Path:
-    local_path = (Path(__file__).resolve().parent / f"../config/{prompt_filename}").resolve()
-    if local_path.exists():
-        return local_path
+    local_candidates = (
+        (Path(__file__).resolve().parent / f"../config/{prompt_filename}").resolve(),
+        (Path(__file__).resolve().parent / f"../../config/{prompt_filename}").resolve(),
+    )
+    for local_path in local_candidates:
+        if local_path.exists():
+            return local_path
 
     share_dir = Path(get_package_share_directory('llm_drone'))
     return (share_dir / 'config' / prompt_filename).resolve()
@@ -183,8 +187,8 @@ def translate_vector_to_nlp(vector: dict) -> str:
         f"- Current position NED is ({p[0]:.2f}, {p[1]:.2f}, {p[2]:.2f}) m.\n"
         f"- Current velocity is ({vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f}) m/s (speed {vector['speed_mps']:.2f} m/s).\n"
         f"- Goal position NED is ({g[0]:.2f}, {g[1]:.2f}, {g[2]:.2f}) m.\n"
-        f"- Output contract: plan {output_contract['count']} waypoints in NED using x/y only; "
-        f"every waypoint z must be fixed to goal z = {output_contract['fixed_z_ned_m']:.2f} m.\n"
+        f"- Output contract: predict exactly {output_contract['count']} waypoint x/y pairs in NED. "
+        f"The planner will set every waypoint z to goal z = {output_contract['fixed_z_ned_m']:.2f} m before execution.\n"
         f"- Goal delta from current state is ({d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}) m with distance {vector['distance_to_goal_m']:.2f} m.\n"
         f"- MPC-consistent obstacle pipeline: {obs_ned['pipeline']}.\n"
         f"- Current depth frame obstacle points (NED): {obs_ned['latest_depth_frame_obstacle_points_ned_count']}; "
@@ -203,26 +207,31 @@ def translate_vector_to_nlp(vector: dict) -> str:
     )
 
 
-def compose_final_prompt(env_vector: dict, env_text: str) -> str:
-    waypoint_count = int(env_vector["waypoint_output_contract"]["count"])
-    return f"""
-Use the fixed planning policy exactly as defined in the system prompt.
+def compose_user_prompt(env_text: str) -> str:
+    return str(env_text or '').strip() + "\n"
 
-Dynamic Environment Section (T(v)):
-{env_text}
 
-Numerical Environment Vector v:
-{json.dumps(env_vector, indent=2)}
+def compose_final_prompt(env_vector: dict | None, env_text: str) -> str:
+    del env_vector
+    return compose_user_prompt(env_text)
 
-Sensor attachments:
-1) Depth map visualization (red/yellow close, blue far)
 
-Return only one JSON object with keys:
-- waypoints
-- reasoning
+def serialize_prompt_bundle(system_prompt: str, user_prompt: str) -> str:
+    system_prompt_text = str(system_prompt or '').strip()
+    user_prompt_text = compose_user_prompt(user_prompt).strip()
+    return (
+        f"{PROMPT_BUNDLE_SYSTEM_MARKER}\n"
+        f"{system_prompt_text}\n\n"
+        f"{PROMPT_BUNDLE_USER_MARKER}\n"
+        f"{user_prompt_text}\n"
+    )
 
-All waypoint coordinates must be in NED.
-Return exactly {waypoint_count} waypoints.
-Only x and y should vary across the waypoint sequence.
-For every waypoint, z must be exactly goal_position_ned_m[2].
-""".strip() + "\n"
+
+def split_prompt_bundle(prompt_text: str, fallback_system_prompt: str = '') -> tuple[str, str]:
+    text = str(prompt_text or '').strip()
+    system_marker = f'{PROMPT_BUNDLE_SYSTEM_MARKER}\n'
+    user_marker = f'\n\n{PROMPT_BUNDLE_USER_MARKER}\n'
+    if text.startswith(system_marker) and user_marker in text:
+        system_text, _, user_text = text[len(system_marker):].partition(user_marker)
+        return system_text.strip(), user_text.strip()
+    return str(fallback_system_prompt or '').strip(), text
