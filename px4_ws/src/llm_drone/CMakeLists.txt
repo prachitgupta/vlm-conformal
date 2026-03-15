@@ -47,7 +47,7 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(PROGRAMS
+set(PYTHON_SCRIPT_WRAPPERS
   scripts/mpc
   scripts/mpc_local_planner
   scripts/mpc_optimal_planner
@@ -64,6 +64,21 @@ install(PROGRAMS
   scripts/eval_llm
   scripts/generate_synthetic_prompts
   scripts/ground_truth_generator
+)
+
+# Remove stale wrappers from older typo'd names so a rebuild doesn't leave both
+# the broken and corrected executables visible in the install space.
+install(CODE
+  "file(REMOVE
+    \"\${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/dataset_genrator_executer\"
+    \"\${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/ground_truth_genrator\"
+    \"\${CMAKE_INSTALL_PREFIX}/${PYTHON_INSTALL_DIR}/${PROJECT_NAME}/llm/dataset_genrator_executer.py\"
+    \"\${CMAKE_INSTALL_PREFIX}/${PYTHON_INSTALL_DIR}/${PROJECT_NAME}/llm/ground_truth_genrator.py\"
+  )"
+)
+
+install(PROGRAMS
+  ${PYTHON_SCRIPT_WRAPPERS}
   DESTINATION lib/${PROJECT_NAME}
 )
 
