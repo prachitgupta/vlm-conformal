@@ -152,6 +152,25 @@ def evaluate_response(
             f"final_progress={progress_final:.2f} m"
         )
 
+    turn_sum = 0.0
+    max_turn_deg = 0.0
+    for i in range(1, len(seq) - 1):
+        u = seq[i] - seq[i - 1]
+        v = seq[i + 1] - seq[i]
+        nu = float(np.linalg.norm(u))
+        nv = float(np.linalg.norm(v))
+        if nu > 1e-8 and nv > 1e-8:
+            c = float(np.clip(np.dot(u, v) / (nu * nv), -1.0, 1.0))
+            ang = math.acos(c)
+            turn_sum += ang
+            max_turn_deg = max(max_turn_deg, math.degrees(ang))
+
+    # Smoothness proxy: mean second-difference magnitude across successive waypoints.
+    curvature_terms = []
+    for i in range(1, len(waypoints) - 1):
+        curvature_terms.append(float(np.linalg.norm(waypoints[i + 1] - 2.0 * waypoints[i] + waypoints[i - 1])))
+    smoothness_kappa_m = float(np.mean(curvature_terms)) if curvature_terms else 0.0
+
     min_clearance = None
     clearance_violations = 0
     safety_pass = True
@@ -192,6 +211,9 @@ def evaluate_response(
         "min_clearance_m": min_clearance,
         "clearance_violations": clearance_violations,
         "clearance_is_proxy": bool(obstacle_points_ned is None or obstacle_points_ned.size == 0),
+        "smoothness_kappa_m": smoothness_kappa_m,
+        "turn_angle_sum_rad": turn_sum,
+        "max_turn_deg": max_turn_deg,
         "reasoning": parsed.get("reasoning", ""),
     }
     passed = bool(kinematic_pass and progress_pass and safety_pass)
@@ -405,9 +427,9 @@ def main() -> None:
     p.add_argument("--goal-y", type=float, default=0.0)
     p.add_argument("--goal-z", type=float, default=-5.0)
     p.add_argument("--eval-dt", type=float, default=1.0)
-    p.add_argument("--eval-v-max", type=float, default=3.0)
-    p.add_argument("--eval-a-max", type=float, default=4.0)
-    p.add_argument("--eval-safety-radius", type=float, default=1.0)
+    p.add_argument("--eval-v-max", type=float, default=15.0)
+    p.add_argument("--eval-a-max", type=float, default=8.0)
+    p.add_argument("--eval-safety-radius", type=float, default=1.5)
     p.add_argument("--obstacles-json", type=str, default="", help="Optional obstacle list JSON, e.g. [[x,y,z],[x,y,z]]")
     p.add_argument("--obstacles-file", type=str, default="", help="Path to JSON file containing Nx3 obstacle points")
     p.add_argument("--save-eval-logs", action="store_true", help="Write latex+metrics logs")

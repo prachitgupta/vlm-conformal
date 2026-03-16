@@ -406,17 +406,48 @@ def build_prompt_from_scene(
     system_prompt_text = str(system_prompt or '').strip()
     return serialize_prompt_bundle(system_prompt_text, user_prompt), env_vector, env_text
 
-
 def build_label_reasoning(eval_result: EvalResult) -> str:
     metrics = eval_result.metrics or {}
+    selected_idx = int(metrics.get('selected_waypoint_index', 0))
+    distance_before = float(metrics.get('distance_to_goal_before_m', 0.0))
+    distance_selected = float(metrics.get('distance_to_goal_selected_m', 0.0))
+    distance_final = float(metrics.get('distance_to_goal_final_m', 0.0))
+    progress_selected = float(metrics.get('progress_selected_m', 0.0))
     progress_final = float(metrics.get('progress_final_m', 0.0))
+    monotone_goal_progress = bool(metrics.get('monotone_goal_progress', False))
+    segment_lengths = [float(v) for v in metrics.get('segment_lengths_m', [])]
+    speeds = [float(v) for v in metrics.get('speeds_mps', [])]
+    accels = [float(v) for v in metrics.get('accels_mps2', [])]
     max_speed = float(metrics.get('max_speed_mps', 0.0))
+    max_accel = float(metrics.get('max_accel_mps2', 0.0))
     min_clearance = metrics.get('min_clearance_m', None)
+    clearance_violations = int(metrics.get('clearance_violations', 0))
     clearance_is_proxy = bool(metrics.get('clearance_is_proxy', True))
-    clearance_text = 'n/a' if clearance_is_proxy or min_clearance is None else f'{float(min_clearance):.2f} m'
+    smoothness_kappa = float(metrics.get('smoothness_kappa_m', 0.0))
+    turn_angle_sum = float(metrics.get('turn_angle_sum_rad', 0.0))
+    max_turn_deg = float(metrics.get('max_turn_deg', 0.0))
+    clearance_text = 'clearance could not be measured geometrically'
+    if not clearance_is_proxy and min_clearance is not None:
+        clearance_text = (
+            f'minimum clearance {float(min_clearance):.2f} m with {clearance_violations} clearance violations'
+        )
+
+    kinematic_text = 'passes' if eval_result.kinematic_pass else 'fails'
+    progress_text = 'passes' if eval_result.progress_pass else 'fails'
+    safety_text = 'passes' if eval_result.safety_pass else 'fails'
+    monotone_text = 'monotonic' if monotone_goal_progress else 'non-monotonic'
+    segment_text = ', '.join(f'{value:.2f}' for value in segment_lengths) if segment_lengths else 'n/a'
+    speed_text = ', '.join(f'{value:.2f}' for value in speeds) if speeds else 'n/a'
+    accel_text = ', '.join(f'{value:.2f}' for value in accels) if accels else 'n/a'
+
     return (
-        f'Eval metrics: progress {progress_final:.2f} m, clearance {clearance_text}, '
-        f'max speed {max_speed:.2f} m/s.'
+        f'Selected waypoint {selected_idx} moves the drone from {distance_before:.2f} m to {distance_selected:.2f} m '
+        f'from goal immediately and to {distance_final:.2f} m by the final waypoint, so progress is '
+        f'{progress_selected:.2f} m selected / {progress_final:.2f} m final and {progress_text} '
+        f'with {monotone_text} goal-distance reduction. Segment lengths [{segment_text}] imply speeds [{speed_text}] '
+        f'and accelerations [{accel_text}], giving max speed {max_speed:.2f} m/s and max accel {max_accel:.2f} m/s^2, '
+        f'so kinematics {kinematic_text}; smoothness kappa is {smoothness_kappa:.2f} m with total turning '
+        f'{turn_angle_sum:.2f} rad and max turn {max_turn_deg:.1f} deg. Safety {safety_text}: {clearance_text}.'
     )
 
 

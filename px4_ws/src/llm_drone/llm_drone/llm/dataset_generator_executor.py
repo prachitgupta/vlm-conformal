@@ -18,7 +18,7 @@ from llm_drone.llm.dataset_pipeline_common import (
     GROUND_TRUTH_LABEL_WINDOW_TOPIC,
     LABEL_MODE_OFFLINE_GROUND_TRUTH,
     LABEL_WAYPOINT_COUNT,
-    PROMPT_MODE_FULL_BUNDLE,
+    PROMPT_MODE_ENV_NL_ONLY,
     SceneSynchronizer,
     build_label_response,
     build_prompt_from_scene,
@@ -31,6 +31,8 @@ from llm_drone.llm.offline_ground_truth_support import (
     trajectory_artifact_goal_z_ned,
     trajectory_artifact_path_ned,
 )
+
+DEFAULT_OUTPUT_CSV = str((Path(__file__).resolve().parents[2] / 'dataset' / 'offline_ground_truth_dataset.csv').resolve())
 
 try:
     from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleOdometry
@@ -46,8 +48,8 @@ class DatasetGeneratorExecuter(Node):
             raise RuntimeError('px4_msgs is required for dataset_generator_executor')
 
         self.declare_parameter('trajectory_json', '')
-        self.declare_parameter('output_csv', '../dataset/offline_ground_truth_dataset.csv')
-        self.declare_parameter('prompt_mode', PROMPT_MODE_FULL_BUNDLE)
+        self.declare_parameter('output_csv', DEFAULT_OUTPUT_CSV)
+        self.declare_parameter('prompt_mode', PROMPT_MODE_ENV_NL_ONLY)
         self.declare_parameter('start_tolerance_m', 0.50)
         self.declare_parameter('playback_speed_scale', 1.0)
         self.declare_parameter('max_odom_sync_dt_s', 0.10)
@@ -56,10 +58,11 @@ class DatasetGeneratorExecuter(Node):
         self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
         self.declare_parameter('eval_dt_s', 0.1)
         self.declare_parameter('eval_v_max_mps', 15.0)
-        self.declare_parameter('eval_a_max_mps2', 10.0)
-        self.declare_parameter('eval_safety_radius_m', 0.5)
+        self.declare_parameter('eval_a_max_mps2', 8.0)
+        self.declare_parameter('eval_safety_radius_m', 1.5)
         self.declare_parameter('z_hold_kp', 1.5)
         self.declare_parameter('z_hold_max_mps', 2.0)
+        self.declare_parameter('velocity_only_setpoint', True)
 
         trajectory_json = str(self.get_parameter('trajectory_json').value).strip()
         if not trajectory_json:
@@ -84,6 +87,7 @@ class DatasetGeneratorExecuter(Node):
         self.start_tolerance_m = float(self.get_parameter('start_tolerance_m').value)
         self.z_hold_kp = float(self.get_parameter('z_hold_kp').value)
         self.z_hold_max_mps = float(self.get_parameter('z_hold_max_mps').value)
+        self.velocity_only_setpoint = bool(self.get_parameter('velocity_only_setpoint').value)
         playback_speed_scale = max(1e-3, float(self.get_parameter('playback_speed_scale').value))
 
         self.scene_sync = SceneSynchronizer(
@@ -125,7 +129,9 @@ class DatasetGeneratorExecuter(Node):
         self.create_timer(self.trajectory_dt_s / playback_speed_scale, self._replay_step)
 
         self.get_logger().info(
-            f'Offline replay executor ready. trajectory_json={trajectory_json} output_csv={self.csv_writer.output_path}'
+            'Offline replay executor ready. '
+            f'trajectory_json={trajectory_json} output_csv={self.csv_writer.output_path} '
+            f'velocity_only_setpoint={self.velocity_only_setpoint}'
         )
 
     def _now_s(self) -> float:
@@ -157,7 +163,7 @@ class DatasetGeneratorExecuter(Node):
     def _publish_offboard_heartbeat(self) -> None:
         msg = OffboardControlMode()
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        msg.position = True
+        msg.position = not self.velocity_only_setpoint
         msg.velocity = True
         msg.acceleration = False
         msg.attitude = False
@@ -178,6 +184,18 @@ class DatasetGeneratorExecuter(Node):
         velocity[2] = 0.0
         return velocity
 
+    def _find_replay_start_index(self) -> tuple[int, float] | None:
+        if self.current_position_ned is None:
+            return None
+        anchor_index = project_pose_to_reference_path(
+            self.reference_path_ned,
+            self.current_position_ned,
+        )
+        distance_to_path = float(np.linalg.norm(self.current_position_ned - self.reference_path_ned[anchor_index]))
+        if distance_to_path > self.start_tolerance_m:
+            return None
+        return anchor_index, distance_to_path
+
     def _z_hold_velocity(self) -> float:
         if self.current_position_ned is None:
             return 0.0
@@ -187,9 +205,16 @@ class DatasetGeneratorExecuter(Node):
     def _publish_setpoint(self, position_ned: np.ndarray, velocity_ned: np.ndarray) -> None:
         sp = TrajectorySetpoint()
         sp.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        sp.position[0] = float(position_ned[0])
-        sp.position[1] = float(position_ned[1])
-        sp.position[2] = float(self.goal_z_ned)
+        if self.velocity_only_setpoint:
+            # Keep PX4 in pure velocity-tracking mode to avoid chasing replay
+            # samples as moving position-hold targets.
+            sp.position[0] = float('nan')
+            sp.position[1] = float('nan')
+            sp.position[2] = float('nan')
+        else:
+            sp.position[0] = float(position_ned[0])
+            sp.position[1] = float(position_ned[1])
+            sp.position[2] = float(self.goal_z_ned)
         sp.velocity[0] = float(velocity_ned[0])
         sp.velocity[1] = float(velocity_ned[1])
         sp.velocity[2] = self._z_hold_velocity()
@@ -201,20 +226,22 @@ class DatasetGeneratorExecuter(Node):
         self._setpoint_pub.publish(sp)
 
     def _replay_step(self) -> None:
+        if not self.replay_started:
+            start_info = self._find_replay_start_index()
+            if start_info is None:
+                return
+            start_index, distance_to_path = start_info
+            self.replay_started = True
+            self.command_index = start_index
+            self.last_projection_index = start_index
+            self.get_logger().info(
+                f'Replay started at path index {start_index} '
+                f'(distance_to_path={distance_to_path:.2f} m)'
+            )
+
         target = np.array(self.reference_path_ned[self.command_index], dtype=float, copy=True)
         velocity = self._reference_velocity(self.command_index)
         self._publish_setpoint(target, velocity)
-
-        if self.current_position_ned is None:
-            return
-        if not self.replay_started:
-            distance_to_start = float(np.linalg.norm(self.current_position_ned - self.reference_path_ned[0]))
-            if distance_to_start <= self.start_tolerance_m:
-                self.replay_started = True
-                self.get_logger().info(
-                    f'Replay started at path index 0 (distance_to_start={distance_to_start:.2f} m)'
-                )
-            return
 
         if self.command_index < self.reference_path_ned.shape[0] - 1:
             self.command_index += 1

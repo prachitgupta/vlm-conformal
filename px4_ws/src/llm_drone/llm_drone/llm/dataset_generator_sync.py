@@ -69,8 +69,8 @@ class SyncDatasetGenerator(Node):
         self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
         self.declare_parameter('eval_dt_s', 0.1)
         self.declare_parameter('eval_v_max_mps', 15.0)
-        self.declare_parameter('eval_a_max_mps2', 10.0)
-        self.declare_parameter('eval_safety_radius_m', 0.5)
+        self.declare_parameter('eval_a_max_mps2', 8.0)
+        self.declare_parameter('eval_safety_radius_m', 1.5)
 
         self.goal = convert_goal_to_ned(
             np.array([

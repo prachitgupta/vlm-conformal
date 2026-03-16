@@ -15,7 +15,8 @@ Frame and units:
 
 Operational constraints:
 - Hard safety: never place waypoints inside or too close to obstacles.
-- Keep at least 1m obstacle clearance when feasible.
+- Keep at least 1.5 m obstacle clearance when feasible.
+- Keep waypoint speeds at or below 15 m/s and waypoint-to-waypoint acceleration changes at or below 8 m/s^2.
 - Keep waypoints dynamically feasible and smooth (no abrupt reversals or zig-zags).
 - Ensure forward progress toward the goal.
 - First waypoint must be local: at most 3.0 m from current position.
@@ -42,7 +43,7 @@ Output:
     {"x": 4.8, "y": 0.0},
     {"x": 6.0, "y": 0.0}
   ],
-  "reasoning": "Clear corridor, so keep a smooth straight rollout."
+  "reasoning": "Selected waypoint 0 moves the drone from 10.00 m to 8.80 m from goal immediately and to 4.00 m by the final waypoint, so progress is 1.20 m selected / 6.00 m final and passes with monotonic goal-distance reduction. Segment lengths [1.20, 1.20, 1.20, 1.20, 1.20] imply speeds [12.00, 12.00, 12.00, 12.00, 12.00] and accelerations [0.00, 0.00, 0.00, 0.00], giving max speed 12.00 m/s and max accel 0.00 m/s^2, so kinematics passes; smoothness kappa is 0.00 m with total turning 0.00 rad and max turn 0.0 deg. Safety passes: clearance could not be measured geometrically."
 }
 
 Example B (obstacle ahead, bypass on right):
@@ -59,7 +60,7 @@ Output:
     {"x": 4.3, "y": 1.8},
     {"x": 5.4, "y": 1.1}
   ],
-  "reasoning": "Right side is clearer, so bypass and merge back smoothly."
+  "reasoning": "Selected waypoint 0 moves the drone from 10.00 m to 9.03 m from goal immediately and to 4.73 m by the final waypoint, so progress is 0.97 m selected / 5.27 m final and passes with monotonic goal-distance reduction. Segment lengths [1.28, 1.22, 1.21, 1.22, 1.30] imply speeds [12.81, 12.21, 12.08, 12.17, 12.04] and accelerations [5.96, 1.27, 0.84, 1.30], giving max speed 12.81 m/s and max accel 5.96 m/s^2, so kinematics passes; smoothness kappa is 0.28 m with total turning 1.49 rad and max turn 41.0 deg. Safety passes: clearance could not be measured geometrically."
 }
 
 Example C (obstacle ahead, bypass on left):
@@ -76,7 +77,7 @@ Output:
     {"x": 4.1, "y": -1.4},
     {"x": 5.2, "y": -0.8}
   ],
-  "reasoning": "Left side is clearer, so take a smooth left detour."
+  "reasoning": "Selected waypoint 0 moves the drone from 8.00 m to 7.23 m from goal immediately and to 2.91 m by the final waypoint, so progress is 0.77 m selected / 5.09 m final and passes with monotonic goal-distance reduction. Segment lengths [1.06, 1.17, 1.26, 1.14, 1.25] imply speeds [10.63, 11.66, 12.65, 11.40, 12.53] and accelerations [10.29, 9.85, 12.56, 11.29], giving max speed 12.65 m/s and max accel 12.56 m/s^2, so kinematics fails; smoothness kappa is 0.34 m with total turning 1.52 rad and max turn 42.6 deg. Safety passes: clearance could not be measured geometrically."
 }
 
 SECTION 3: EXPECTED OUTPUT
@@ -91,14 +92,19 @@ Required schema (exact top-level keys):
     {"x": <float>, "y": <float>},
     {"x": <float>, "y": <float>}
   ],
-  "reasoning": "<short plain text>"
+  "reasoning": "Selected waypoint <int> moves the drone from <float> m to <float> m from goal immediately and to <float> m by the final waypoint, so progress is <float> m selected / <float> m final and <passes|fails> with <monotonic|non-monotonic> goal-distance reduction. Segment lengths [<float>, <float>, <float>, <float>, <float>] imply speeds [<float>, <float>, <float>, <float>, <float>] and accelerations [<float>, <float>, <float>, <float>], giving max speed <float> m/s and max accel <float> m/s^2, so kinematics <passes|fails>; smoothness kappa is <float> m with total turning <float> rad and max turn <float> deg. Safety <passes|fails>: <clearance sentence>."
 }
 
+Canonical reasoning template:
+"Selected waypoint {selected_waypoint_index} moves the drone from {distance_to_goal_before_m:.2f} m to {distance_to_goal_selected_m:.2f} m from goal immediately and to {distance_to_goal_final_m:.2f} m by the final waypoint, so progress is {progress_selected_m:.2f} m selected / {progress_final_m:.2f} m final and {passes|fails} with {monotonic|non-monotonic} goal-distance reduction. Segment lengths [{segment_lengths_m}] imply speeds [{speeds_mps}] and accelerations [{accels_mps2}], giving max speed {max_speed_mps:.2f} m/s and max accel {max_accel_mps2:.2f} m/s^2, so kinematics {passes|fails}; smoothness kappa is {smoothness_kappa_m:.2f} m with total turning {turn_angle_sum_rad:.2f} rad and max turn {max_turn_deg:.1f} deg. Safety {passes|fails}: {clearance sentence}."
+
 Canonical example format:
-{"waypoints":[{"x":0.8052063167095185,"y":-7.4872291624546055},{"x":0.8025942315491086,"y":-7.355087188645527},{"x":0.7982234439931912,"y":-7.15276786349404},{"x":0.7921694544690998,"y":-6.8833076126059},{"x":0.784507763404168,"y":-6.549742862315601}],"reasoning":" reasoning hardcoded from eval metric keeping word limit to min"}
+{"waypoints":[{"x":0.8052063167095185,"y":-7.4872291624546055},{"x":0.8025942315491086,"y":-7.355087188645527},{"x":0.7982234439931912,"y":-7.15276786349404},{"x":0.7921694544690998,"y":-6.8833076126059},{"x":0.784507763404168,"y":-6.549742862315601}],"reasoning":"Selected waypoint 0 moves the drone from 8.12 m to 7.99 m from goal immediately and to 7.28 m by the final waypoint, so progress is 0.13 m selected / 0.84 m final and passes with monotonic goal-distance reduction. Segment lengths [0.13, 0.20, 0.27, 0.33, 0.40] imply speeds [1.32, 2.02, 2.69, 3.34, 4.01] and accelerations [7.00, 6.70, 6.50, 6.70], giving max speed 4.01 m/s and max accel 7.00 m/s^2, so kinematics passes; smoothness kappa is 0.07 m with total turning 0.03 rad and max turn 1.7 deg. Safety passes: clearance could not be measured geometrically."}
 
 Schema rules:
 - "waypoints" must contain exactly 5 waypoint objects.
 - Every waypoint must include numeric x and y.
 - Waypoints must be ordered in execution order from immediate next step to farther local lookahead.
-- "reasoning" must be short, direct, and minimal.
+- "reasoning" must follow the canonical reasoning template exactly in sentence order and field order.
+- Do not invent a different explanation style, summary style, or shorter paraphrase for "reasoning".
+- If obstacle clearance is unavailable, use exactly: "clearance could not be measured geometrically."

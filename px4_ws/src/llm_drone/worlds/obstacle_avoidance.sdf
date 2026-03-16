@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <world name="obstacle_avoidance">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <plugin name="gz::sim::systems::Physics" filename="gz-sim-physics-system"/>
+    <plugin name="gz::sim::systems::UserCommands" filename="gz-sim-user-commands-system"/>
+    <plugin name="gz::sim::systems::SceneBroadcaster" filename="gz-sim-scene-broadcaster-system"/>
+    <plugin name="gz::sim::systems::Contact" filename="gz-sim-contact-system"/>
+    <plugin name="gz::sim::systems::Imu" filename="gz-sim-imu-system"/>
+    <plugin name="gz::sim::systems::AirPressure" filename="gz-sim-air-pressure-system"/>
+    <plugin name="gz::sim::systems::AirSpeed" filename="gz-sim-air-speed-system"/>
+    <plugin name="gz::sim::systems::ApplyLinkWrench" filename="gz-sim-apply-link-wrench-system"/>
+    <plugin name="gz::sim::systems::NavSat" filename="gz-sim-navsat-system"/>
+    <plugin name="gz::sim::systems::Magnetometer" filename="gz-sim-magnetometer-system"/>
+    <plugin name="gz::sim::systems::Sensors" filename="gz-sim-sensors-system">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin name="custom::OpticalFlowSystem" filename="libOpticalFlowSystem.so"/>
+    <plugin name="custom::GstCameraSystem" filename="libGstCameraSystem.so"/>
+
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+
+    <scene>
+      <grid>true</grid>
+      <ambient>0.45 0.45 0.45 1</ambient>
+      <background>0.74 0.77 0.82 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1 1</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction><ode/></friction>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>120 120</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.85 0.85 0.85 1</ambient>
+            <diffuse>0.85 0.85 0.85 1</diffuse>
+            <specular>0.4 0.4 0.4 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1.0</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.25 0.25 0.25 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+    </light>
+
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg>8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
+    <model name="lane_left_wall">
+      <static>false</static>
+      <pose>16 6 2.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>36 0.5 5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>36 0.5 5</size></box></geometry>
+          <material><ambient>0.5 0.5 0.52 1</ambient><diffuse>0.6 0.6 0.62 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="lane_right_wall">
+      <static>false</static>
+      <pose>16 -6 2.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>36 0.5 5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>36 0.5 5</size></box></geometry>
+          <material><ambient>0.5 0.5 0.52 1</ambient><diffuse>0.6 0.6 0.62 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="block_01">
+      <static>false</static>
+      <pose>7 2.1 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></visual>
+      </link>
+    </model>
+    <model name="block_02">
+      <static>false</static>
+      <pose>10 -2.0 1.75 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></visual>
+      </link>
+    </model>
+    <model name="block_03">
+      <static>false</static>
+      <pose>14 1.6 1.25 0 0 0</pose>
+     <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></visual>
+      </link>
+    </model>
+    <model name="block_04">
+      <static>false</static>
+      <pose>18 -2.5 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></visual>
+      </link>
+    </model>
+    <model name="block_05">
+      <static>false</static>
+      <pose>22 2.0 1.75 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></visual>
+      </link>
+    </model>
+    <model name="block_06">
+      <static>false</static>
+      <pose>26 -1.8 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></visual>
+      </link>
+    </model>
+
+    <model name="cyl_01">
+      <static>false</static>
+      <pose>12 4.0 1.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.2</length></cylinder></geometry></visual>
+      </link>
+    </model>
+    <model name="cyl_02">
+      <static>false</static>
+      <pose>20 -4.1 1.8 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.6</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.6</length></cylinder></geometry></visual>
+      </link>
+    </model>
+    <model name="cyl_03">
+      <static>false</static>
+      <pose>29 3.8 1.7 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.3</radius><length>3.4</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.3</radius><length>3.4</length></cylinder></geometry></visual>
+      </link>
+    </model>
+
+    <model name="goal_gate_left">
+      <static>false</static>
+      <pose>33 1.5 2.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 2.0 5.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 2.0 5.0</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="goal_gate_right">
+      <static>false</static>
+      <pose>33 -1.5 2.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 2.0 5.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.5 2.0 5.0</size></box></geometry></visual>
+      </link>
+    </model>
+  </world>
+</sdf>

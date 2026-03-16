@@ -11,3 +11,7 @@ ros2 run llm_drone ground_truth_generator --ros-args -p world_sdf_path:=/home/pr
 ros2 run llm_drone ground_truth_generator --ros-args -p world_sdf_glob:=/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds/*.sdf
 
 ros2 run llm_drone dataset_generator_executor --ros-args -p trajectory_json:=/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/trajectories/no_obs.json
+
+source ~/train_env/bin/activate
+
+python3 train.py

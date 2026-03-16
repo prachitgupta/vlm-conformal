@@ -153,8 +153,9 @@ class TrainConfig:
     # in your waypoint coordinates.
 
     # --- Data ---
-    data_path: str = str((Path(__file__).resolve().parents[1] / "dataset" / "dataset.csv"))
+    data_path: str = str((Path(__file__).resolve().parents[1] / "dataset" / "offline_ground_truth_dataset.csv"))
     # Supported inputs:
+    # - offline_ground_truth_dataset.csv from dataset_generator_executor.py
     # - raw dataset.csv from dataset_generator_sync.py
     # - JSONL with {"prompt","completion"} rows
     # - JSONL with {"messages":[...]} rows

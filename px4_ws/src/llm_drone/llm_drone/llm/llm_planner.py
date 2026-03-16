@@ -206,6 +206,7 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('vllm_max_tokens', 400)
         self.declare_parameter('goal_frame', 'ned')  # gazebo(ENU) or ned
         self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
+        self.declare_parameter('max_velocity_mps', 15.0)
         
         goal_input = np.array([
             self.get_parameter('goal_x').value,
@@ -779,7 +780,7 @@ class LLMTrajectoryPlanner(Node):
         distance = np.linalg.norm(direction)
         
         if distance > 0:
-            max_speed = 1.5  # m/s
+            max_speed = float(self.get_parameter('max_velocity_mps').value)
             speed = min(max_speed, distance)
             velocity = (direction / distance) * speed
         else:
