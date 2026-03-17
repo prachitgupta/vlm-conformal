@@ -62,7 +62,7 @@ def build_environment_vector(
     goal = np.asarray(goal_ned, dtype=float)
     depth = np.asarray(depth_image, dtype=float)
     latest_obs = np.asarray(latest_depth_obstacles_ned, dtype=float)
-    local_obs = np.asarray(local_obstacle_snapshot, dtype=float)
+    del local_obstacle_snapshot
 
     valid_depth = depth[np.isfinite(depth)]
     valid_depth = valid_depth[(valid_depth > DEPTH_MIN_M) & (valid_depth < PROMPT_DEPTH_STATS_MAX_M)]
@@ -103,12 +103,12 @@ def build_environment_vector(
     speed = float(np.linalg.norm(vel))
     heading_to_goal_xy = float(np.arctan2(goal_delta[1], goal_delta[0]))
 
-    if local_obs.ndim == 2 and local_obs.shape[0] > 0:
-        rel = local_obs - pos[None, :]
+    if latest_obs.ndim == 2 and latest_obs.shape[0] > 0:
+        rel = latest_obs - pos[None, :]
         dists = np.linalg.norm(rel, axis=1)
         idx = int(np.argmin(dists))
         nearest_dist_ned = float(dists[idx])
-        nearest_point_ned = [float(x) for x in local_obs[idx]]
+        nearest_point_ned = [float(x) for x in latest_obs[idx]]
         nearest_vec_ned = [float(x) for x in rel[idx]]
     else:
         nearest_dist_ned = PROMPT_DEPTH_STATS_MAX_M
@@ -116,7 +116,6 @@ def build_environment_vector(
         nearest_vec_ned = [PROMPT_DEPTH_STATS_MAX_M, 0.0, 0.0]
 
     latest_obs_count = int(latest_obs.shape[0]) if latest_obs.ndim == 2 else 0
-    local_obs_count = int(local_obs.shape[0]) if local_obs.ndim == 2 else 0
 
     return {
         "current_position_ned_m": [float(x) for x in pos],
@@ -127,7 +126,7 @@ def build_environment_vector(
         "speed_mps": speed,
         "heading_to_goal_xy_rad": heading_to_goal_xy,
         "obstacle_features_ned": {
-            "pipeline": "mpc_consistent_depth_to_body_to_ned_fifo_local_map",
+            "pipeline": "depth_camera_to_body_to_ned_current_frame",
             "depth_camera_params": {
                 "hfov_deg": DEPTH_HFOV_DEG,
                 "vfov_deg": DEPTH_VFOV_DEG,
@@ -135,12 +134,10 @@ def build_environment_vector(
                 "depth_max_m": DEPTH_MAX_M,
                 "sample_count_per_frame_target": int(depth_sample_count),
             },
-            "latest_depth_frame_obstacle_points_ned_count": latest_obs_count,
-            "local_obstacle_fifo_count": local_obs_count,
-            "nearest_obstacle_distance_ned_m": nearest_dist_ned,
-            "nearest_obstacle_position_ned_m": nearest_point_ned,
-            "nearest_obstacle_relative_ned_m": nearest_vec_ned,
-            "mpc_nearest_obstacle_eq11_x_min_ned_m": nearest_point_ned,
+            "depth_frame_obstacle_points_ned_count": latest_obs_count,
+            "nearest_depth_obstacle_distance_ned_m": nearest_dist_ned,
+            "nearest_depth_obstacle_position_ned_m": nearest_point_ned,
+            "nearest_depth_obstacle_relative_ned_m": nearest_vec_ned,
         },
         "depth_features": {
             "valid_fraction": depth_valid_fraction,
@@ -190,14 +187,13 @@ def translate_vector_to_nlp(vector: dict) -> str:
         f"- Output contract: predict exactly {output_contract['count']} waypoint x/y pairs in NED. "
         f"The planner will set every waypoint z to goal z = {output_contract['fixed_z_ned_m']:.2f} m before execution.\n"
         f"- Goal delta from current state is ({d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}) m with distance {vector['distance_to_goal_m']:.2f} m.\n"
-        f"- MPC-consistent obstacle pipeline: {obs_ned['pipeline']}.\n"
-        f"- Current depth frame obstacle points (NED): {obs_ned['latest_depth_frame_obstacle_points_ned_count']}; "
-        f"FIFO local obstacle map size: {obs_ned['local_obstacle_fifo_count']} points. "
-        f"Nearest obstacle in NED is at ({obs_ned['nearest_obstacle_position_ned_m'][0]:.2f}, "
-        f"{obs_ned['nearest_obstacle_position_ned_m'][1]:.2f}, {obs_ned['nearest_obstacle_position_ned_m'][2]:.2f}) m, "
-        f"relative vector ({obs_ned['nearest_obstacle_relative_ned_m'][0]:.2f}, "
-        f"{obs_ned['nearest_obstacle_relative_ned_m'][1]:.2f}, {obs_ned['nearest_obstacle_relative_ned_m'][2]:.2f}) m, "
-        f"distance {obs_ned['nearest_obstacle_distance_ned_m']:.2f} m.\n"
+        f"- Obstacle pipeline: {obs_ned['pipeline']}.\n"
+        f"- Current depth frame obstacle points projected into NED: {obs_ned['depth_frame_obstacle_points_ned_count']}. "
+        f"Nearest depth obstacle in NED is at ({obs_ned['nearest_depth_obstacle_position_ned_m'][0]:.2f}, "
+        f"{obs_ned['nearest_depth_obstacle_position_ned_m'][1]:.2f}, {obs_ned['nearest_depth_obstacle_position_ned_m'][2]:.2f}) m, "
+        f"relative vector ({obs_ned['nearest_depth_obstacle_relative_ned_m'][0]:.2f}, "
+        f"{obs_ned['nearest_depth_obstacle_relative_ned_m'][1]:.2f}, {obs_ned['nearest_depth_obstacle_relative_ned_m'][2]:.2f}) m, "
+        f"distance {obs_ned['nearest_depth_obstacle_distance_ned_m']:.2f} m.\n"
         f"- Depth validity fraction is {depth['valid_fraction']:.2f}. Global nearest obstacle distance is {depth['global_min_m']:.2f} m.\n"
         f"- Sector minimum distances [far_left, left, center, right, far_right] are "
         f"[{mins['far_left']:.2f}, {mins['left']:.2f}, {mins['center']:.2f}, {mins['right']:.2f}, {mins['far_right']:.2f}] m.\n"

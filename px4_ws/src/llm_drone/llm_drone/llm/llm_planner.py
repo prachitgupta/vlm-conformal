@@ -301,7 +301,7 @@ class LLMTrajectoryPlanner(Node):
             f'Active LLM backend: provider={provider} ({backend_desc}), model={active_model}'
         )
         self.get_logger().info(
-            'Obstacle perception source: /depth_camera (MPC-consistent depth->3D->NED local map)'
+            'Obstacle perception source: /depth_camera (current depth frame projected to NED)'
         )
         if HAS_PX4_MSGS:
             self.get_logger().info('Publishing PX4 trajectory setpoints to /fmu/in/trajectory_setpoint')

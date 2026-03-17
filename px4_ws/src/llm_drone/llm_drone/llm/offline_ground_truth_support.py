@@ -417,6 +417,7 @@ def scenario_manifest_from_sdf(
     default_start_pose_enu: PoseENU | None = None,
     default_spawn_pose_enu: PoseENU | None = None,
     default_goal_pose_enu: PoseENU | None = None,
+    fallback_start_as_spawn_when_missing: bool = True,
 ) -> ScenarioManifest:
     sdf_path = Path(path).expanduser().resolve()
     root = ET.parse(str(sdf_path)).getroot()
@@ -437,10 +438,20 @@ def scenario_manifest_from_sdf(
     spawn_pose = default_spawn_pose_enu or PoseENU(*DEFAULT_SPAWN_POSE_ENU)
     named_start = _find_named_pose(model_poses, ('start_marker', 'start_pose', 'start'))
     named_spawn = _find_named_pose(model_poses, ('spawn_marker', 'spawn_pose', 'spawn'))
+    spawn_source = 'default_spawn_pose'
     if named_start is not None:
         start_pose = PoseENU(named_start.x, named_start.y, float(fixed_altitude_m), named_start.yaw)
     if named_spawn is not None:
         spawn_pose = PoseENU(named_spawn.x, named_spawn.y, named_spawn.z, named_spawn.yaw)
+        spawn_source = 'named_spawn_model'
+    elif named_start is not None and fallback_start_as_spawn_when_missing:
+        # For saved worlds without an explicit drone model, use the start-marker
+        # XY as the spawn point while preserving the default spawn altitude.
+        spawn_z = named_start.z
+        if default_spawn_pose_enu is not None:
+            spawn_z = float(default_spawn_pose_enu.z)
+        spawn_pose = PoseENU(named_start.x, named_start.y, float(spawn_z), named_start.yaw)
+        spawn_source = 'start_marker_xy_fallback'
 
     if default_goal_pose_enu is not None:
         goal_pose = PoseENU(
@@ -471,7 +482,7 @@ def scenario_manifest_from_sdf(
             'sdf_world_name': str(world.get('name', sdf_path.stem)),
             'goal_source': goal_source,
             'start_source': 'named_start_model' if named_start is not None else 'default_start_pose',
-            'spawn_source': 'named_spawn_model' if named_spawn is not None else 'default_spawn_pose',
+            'spawn_source': spawn_source,
         },
     )
 
@@ -484,6 +495,7 @@ def scenario_manifests_from_sdf_inputs(
     default_start_pose_enu: PoseENU | None = None,
     default_spawn_pose_enu: PoseENU | None = None,
     default_goal_pose_enu: PoseENU | None = None,
+    fallback_start_as_spawn_when_missing: bool = True,
 ) -> list[ScenarioManifest]:
     candidate_paths: list[Path] = []
     if world_sdf_path.strip():
@@ -512,6 +524,7 @@ def scenario_manifests_from_sdf_inputs(
             default_start_pose_enu=default_start_pose_enu,
             default_spawn_pose_enu=default_spawn_pose_enu,
             default_goal_pose_enu=default_goal_pose_enu,
+            fallback_start_as_spawn_when_missing=fallback_start_as_spawn_when_missing,
         )
         for path_obj in unique_paths
     ]
@@ -1416,8 +1429,9 @@ def build_trajectory_artifact(manifest: ScenarioManifest, trajectory: dict[str, 
 
 def env_file_text(manifest: ScenarioManifest) -> str:
     spawn = manifest.spawn_pose_enu or manifest.start_pose_enu
+    gazebo_world_name = str(manifest.metadata.get('sdf_world_name', manifest.world_name))
     return (
-        f'export PX4_GZ_WORLD={manifest.world_name}\n'
+        f'export PX4_GZ_WORLD={gazebo_world_name}\n'
         'export PX4_SIM_MODEL="${PX4_SIM_MODEL:-gz_x500_depth}"\n'
         f'export PX4_GZ_MODEL_POSE="{spawn.x:.3f},{spawn.y:.3f},{spawn.z:.3f},0,0,{spawn.yaw:.3f}"\n'
     )

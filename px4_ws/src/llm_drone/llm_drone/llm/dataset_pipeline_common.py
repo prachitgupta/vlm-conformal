@@ -415,21 +415,25 @@ def build_label_reasoning(eval_result: EvalResult) -> str:
     progress_selected = float(metrics.get('progress_selected_m', 0.0))
     progress_final = float(metrics.get('progress_final_m', 0.0))
     monotone_goal_progress = bool(metrics.get('monotone_goal_progress', False))
+    goal_reached_tolerance_m = float(metrics.get('goal_reached_tolerance_m', 0.35))
+    goal_reached_before_sequence = bool(metrics.get('goal_reached_before_sequence', False))
+    goal_reached_after_waypoint_index = metrics.get('goal_reached_after_waypoint_index', None)
     segment_lengths = [float(v) for v in metrics.get('segment_lengths_m', [])]
     speeds = [float(v) for v in metrics.get('speeds_mps', [])]
     accels = [float(v) for v in metrics.get('accels_mps2', [])]
     max_speed = float(metrics.get('max_speed_mps', 0.0))
     max_accel = float(metrics.get('max_accel_mps2', 0.0))
+    kinematic_waypoint_count = int(metrics.get('kinematic_waypoint_count', 0))
     min_clearance = metrics.get('min_clearance_m', None)
     clearance_violations = int(metrics.get('clearance_violations', 0))
     clearance_is_proxy = bool(metrics.get('clearance_is_proxy', True))
-    smoothness_kappa = float(metrics.get('smoothness_kappa_m', 0.0))
-    turn_angle_sum = float(metrics.get('turn_angle_sum_rad', 0.0))
-    max_turn_deg = float(metrics.get('max_turn_deg', 0.0))
+    clearance_source = str(metrics.get('clearance_source', 'none'))
     clearance_text = 'clearance could not be measured geometrically'
     if not clearance_is_proxy and min_clearance is not None:
+        clearance_source_text = 'manifest obstacles' if clearance_source == 'manifest_obstacles' else 'depth obstacles'
         clearance_text = (
-            f'minimum clearance {float(min_clearance):.2f} m with {clearance_violations} clearance violations'
+            f'minimum clearance {float(min_clearance):.2f} m against {clearance_source_text} '
+            f'with {clearance_violations} violating segment(s)'
         )
 
     kinematic_text = 'passes' if eval_result.kinematic_pass else 'fails'
@@ -439,15 +443,26 @@ def build_label_reasoning(eval_result: EvalResult) -> str:
     segment_text = ', '.join(f'{value:.2f}' for value in segment_lengths) if segment_lengths else 'n/a'
     speed_text = ', '.join(f'{value:.2f}' for value in speeds) if speeds else 'n/a'
     accel_text = ', '.join(f'{value:.2f}' for value in accels) if accels else 'n/a'
+    if goal_reached_before_sequence:
+        terminal_text = (
+            f'Goal has already been reached at the reference anchor within {goal_reached_tolerance_m:.2f} m tolerance.'
+        )
+    elif goal_reached_after_waypoint_index is not None:
+        terminal_text = (
+            f'Goal will be reached in {int(goal_reached_after_waypoint_index)} waypoint(s) '
+            f'within {goal_reached_tolerance_m:.2f} m tolerance.'
+        )
+    else:
+        terminal_text = 'Goal is not reached within this label waypoint window.'
 
     return (
-        f'Selected waypoint {selected_idx} moves the drone from {distance_before:.2f} m to {distance_selected:.2f} m '
+        f'Selected waypoint {selected_idx} moves the reference anchor from {distance_before:.2f} m to {distance_selected:.2f} m '
         f'from goal immediately and to {distance_final:.2f} m by the final waypoint, so progress is '
         f'{progress_selected:.2f} m selected / {progress_final:.2f} m final and {progress_text} '
-        f'with {monotone_text} goal-distance reduction. Segment lengths [{segment_text}] imply speeds [{speed_text}] '
+        f'with {monotone_text} goal-distance reduction. Kinematics is evaluated on {kinematic_waypoint_count} unique '
+        f'label waypoint(s), excluding consecutive duplicate terminal holds. Segment lengths [{segment_text}] imply speeds [{speed_text}] '
         f'and accelerations [{accel_text}], giving max speed {max_speed:.2f} m/s and max accel {max_accel:.2f} m/s^2, '
-        f'so kinematics {kinematic_text}; smoothness kappa is {smoothness_kappa:.2f} m with total turning '
-        f'{turn_angle_sum:.2f} rad and max turn {max_turn_deg:.1f} deg. Safety {safety_text}: {clearance_text}.'
+        f'so kinematics {kinematic_text}. {terminal_text} Safety {safety_text}: {clearance_text}.'
     )
 
 
@@ -457,6 +472,9 @@ def build_label_response(
     label_mode: str,
     scene: dict[str, Any],
     goal_ned: np.ndarray,
+    evaluation_start_ned: np.ndarray | None = None,
+    obstacle_points_ned: np.ndarray | None = None,
+    obstacle_specs=None,
     eval_dt_s: float,
     eval_v_max_mps: float,
     eval_a_max_mps2: float,
@@ -469,10 +487,17 @@ def build_label_response(
         ],
     }
     eval_result = evaluate_response(
-        current_position_ned=np.asarray(scene['position'], dtype=float),
+        current_position_ned=np.asarray(
+            scene['position'] if evaluation_start_ned is None else evaluation_start_ned,
+            dtype=float,
+        ),
         goal_ned=np.asarray(goal_ned, dtype=float),
         llm_response_text=json.dumps(eval_response, separators=(',', ':')),
-        obstacle_points_ned=np.asarray(scene['local_obstacle_snapshot'], dtype=float),
+        obstacle_points_ned=np.asarray(
+            scene['local_obstacle_snapshot'] if obstacle_points_ned is None else obstacle_points_ned,
+            dtype=float,
+        ),
+        obstacle_specs=obstacle_specs,
         dt=float(eval_dt_s),
         v_max=float(eval_v_max_mps),
         a_max=float(eval_a_max_mps2),

@@ -19,6 +19,7 @@ from llm_drone.llm.offline_ground_truth_support import (
     astar_path,
     build_planning_grid,
     default_lane_walls,
+    env_file_text,
     extract_future_waypoints,
     gazebo_enu_to_ned,
     generate_reference_trajectory,
@@ -209,6 +210,39 @@ def test_scenario_manifest_from_sdf_extracts_obstacles_and_goal(tmp_path) -> Non
     assert math.isclose(manifest.goal_pose_enu.z, 2.5)
     assert len(manifest.obstacles) == 3
     assert {obstacle.name for obstacle in manifest.obstacles} == {'goal_gate_left', 'goal_gate_right', 'pillar'}
+
+
+def test_scenario_manifest_from_sdf_uses_start_xy_for_spawn_fallback(tmp_path) -> None:
+    sdf_path = tmp_path / 'start_only_world.sdf'
+    sdf_path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<sdf version="1.9"><world name="obstacle_avoidance">'
+        '<model name="ground_plane"><static>true</static><link name="link"><collision name="collision">'
+        '<geometry><plane><normal>0 0 1</normal><size>1 1</size></plane></geometry>'
+        '</collision></link></model>'
+        '<model name="start_marker"><pose>4.5 -1.25 2.6 0 0 0.4</pose><link name="link"><collision name="collision">'
+        '<geometry><box><size>0.5 0.5 0.2</size></box></geometry></collision></link></model>'
+        '<model name="goal_marker"><pose>12.0 1.0 2.5 0 0 0</pose><link name="link"><collision name="collision">'
+        '<geometry><box><size>0.5 0.5 0.2</size></box></geometry></collision></link></model>'
+        '</world></sdf>\n'
+    )
+
+    manifest = scenario_manifest_from_sdf(
+        sdf_path,
+        fixed_altitude_m=2.5,
+        default_spawn_pose_enu=PoseENU(0.0, 0.0, 1.0, 0.0),
+    )
+
+    assert manifest.spawn_pose_enu is not None
+    assert math.isclose(manifest.spawn_pose_enu.x, 4.5)
+    assert math.isclose(manifest.spawn_pose_enu.y, -1.25)
+    assert math.isclose(manifest.spawn_pose_enu.z, 1.0)
+    assert math.isclose(manifest.spawn_pose_enu.yaw, 0.4)
+    assert manifest.metadata['spawn_source'] == 'start_marker_xy_fallback'
+
+    env_text = env_file_text(manifest)
+    assert 'export PX4_GZ_WORLD=obstacle_avoidance' in env_text
+    assert 'export PX4_GZ_MODEL_POSE="4.500,-1.250,1.000,0,0,0.400"' in env_text
 
 
 def test_generate_reference_trajectory_smoke_empty_world() -> None:

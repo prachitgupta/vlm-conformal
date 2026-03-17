@@ -1,6 +1,20 @@
 cmake_minimum_required(VERSION 3.8)
 project(llm_drone)
 
+file(GLOB_RECURSE PYTHON_PACKAGE_FILES
+  RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+  llm_drone/*.py
+)
+file(GLOB PYTHON_SCRIPT_FILES
+  RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+  scripts/*
+)
+set_property(
+  DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${PYTHON_PACKAGE_FILES}
+  ${PYTHON_SCRIPT_FILES}
+)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -62,8 +76,11 @@ set(PYTHON_SCRIPT_WRAPPERS
   scripts/dataset_generator_executor
   scripts/debug_pointcloud_obstacles
   scripts/eval_llm
+  scripts/trajectory_goto_debug
+  scripts/trajectory_goto_mode_debug
   scripts/generate_synthetic_prompts
   scripts/ground_truth_generator
+  scripts/offline_dataset_batch_runner
 )
 
 # Remove stale wrappers from older typo'd names so a rebuild doesn't leave both

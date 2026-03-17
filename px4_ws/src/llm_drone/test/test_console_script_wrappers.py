@@ -1,4 +1,5 @@
 import ast
+import os
 from pathlib import Path
 
 
@@ -32,3 +33,16 @@ def test_console_scripts_match_wrapper_files():
     }
 
     assert wrapper_files == console_scripts
+
+
+def test_console_script_wrappers_are_executable():
+    package_root = Path(__file__).resolve().parents[1]
+    non_executable = [
+        path.name for path in (package_root / "scripts").iterdir()
+        if path.is_file()
+        and path.name != "__init__.py"
+        and "." not in path.name
+        and not os.access(path, os.X_OK)
+    ]
+
+    assert non_executable == []

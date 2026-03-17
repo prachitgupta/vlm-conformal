@@ -41,6 +41,8 @@ except ImportError:
 DEFAULT_LLM_RESPONSE = (
     '{"waypoints":[{"x":1.6,"y":5.25,"z":-2.5},{"x":2.6,"y":5.95,"z":-2.55},{"x":3.8,"y":6.45,"z":-2.55},{"x":5.1,"y":6.2,"z":-2.45},{"x":6.5,"y":5.6,"z":-2.35}],"selected_waypoint_index":0,"reasoning":"Left sectors are blocked nearby, so bypass through the clearer right side with a smooth 5-point arc, then begin turning back toward the goal while keeping safe negative altitude."}'
 )
+GOAL_REACHED_TOLERANCE_M = 0.35
+WAYPOINT_DUPLICATE_EPS_M = 1e-3
 
 # Keep these aligned with llm_planner.py / prompt_generator_samples.py
 DEPTH_HFOV_DEG = 72.995
@@ -176,6 +178,19 @@ def _seg_point_distance(a: np.ndarray, b: np.ndarray, p: np.ndarray) -> float:
     return float(np.linalg.norm(p - proj))
 
 
+def _compress_consecutive_waypoints(
+    waypoints: list[np.ndarray],
+    *,
+    eps_m: float = WAYPOINT_DUPLICATE_EPS_M,
+) -> list[np.ndarray]:
+    compressed: list[np.ndarray] = []
+    for waypoint in waypoints:
+        wp = np.asarray(waypoint, dtype=float)
+        if not compressed or _dist(compressed[-1], wp) > float(eps_m):
+            compressed.append(wp)
+    return compressed
+
+
 def parse_llm_response(text: str) -> dict[str, Any]:
     s = text.find("{")
     e = text.rfind("}") + 1
@@ -219,6 +234,7 @@ def evaluate_response(
     v_max: float,
     a_max: float,
     safety_radius: float,
+    obstacle_specs=None,
 ) -> EvalResult:
     errors: list[str] = []
     warnings: list[str] = []
@@ -244,7 +260,11 @@ def evaluate_response(
     p_sel = waypoints[idx]
 
     seq = [p0] + waypoints
-    seg_lengths = [_dist(seq[i], seq[i + 1]) for i in range(len(seq) - 1)]
+    kinematic_waypoints = _compress_consecutive_waypoints(waypoints)
+    seg_lengths = [
+        _dist(kinematic_waypoints[i], kinematic_waypoints[i + 1])
+        for i in range(len(kinematic_waypoints) - 1)
+    ]
     speeds = [d / max(dt, 1e-6) for d in seg_lengths]
     accels = [
         abs(speeds[i + 1] - speeds[i]) / max(dt, 1e-6) for i in range(len(speeds) - 1)
@@ -263,6 +283,11 @@ def evaluate_response(
     progress_final = d0 - d5
     progress_pass = (progress_selected > 0.0) and (progress_final > 0.0)
     goal_dists = [_dist(wp, goal) for wp in waypoints]
+    goal_reached_before_sequence = d0 <= GOAL_REACHED_TOLERANCE_M
+    goal_reached_after_waypoint_index = next(
+        (i + 1 for i, dist in enumerate(goal_dists) if dist <= GOAL_REACHED_TOLERANCE_M),
+        None,
+    )
     monotone_goal_progress = all(goal_dists[i] <= (d0 if i == 0 else goal_dists[i - 1]) + 1e-6 for i in range(len(goal_dists)))
     if not progress_pass:
         warnings.append(
@@ -272,45 +297,30 @@ def evaluate_response(
 
     min_clearance = None
     clearance_violations = 0
+    segment_clearances: list[float] = []
     safety_pass = True
     if obstacle_points_ned is not None and obstacle_points_ned.size > 0:
+        obstacle_points = np.asarray(obstacle_points_ned, dtype=float)
         min_clearance = float("inf")
         for i in range(len(seq) - 1):
             a = seq[i]
             b = seq[i + 1]
-            for obs in obstacle_points_ned:
-                d = _seg_point_distance(a, b, obs)
-                if d < min_clearance:
-                    min_clearance = d
-                if d < safety_radius:
-                    clearance_violations += 1
+            segment_min_clearance = min(
+                _seg_point_distance(a, b, obs) for obs in obstacle_points
+            )
+            segment_clearances.append(float(segment_min_clearance))
+            if segment_min_clearance < min_clearance:
+                min_clearance = float(segment_min_clearance)
+            if segment_min_clearance < safety_radius:
+                clearance_violations += 1
         safety_pass = bool(min_clearance >= safety_radius)
         if not safety_pass:
             warnings.append(
                 f"Safety violation: min_clearance={min_clearance:.2f} m < safety_radius={safety_radius:.2f} m "
-                f"(clearance_violations={clearance_violations})"
+                f"(violating_segments={clearance_violations})"
             )
     else:
         warnings.append("Safety check degraded: no obstacle snapshot available, geometric clearance not validated")
-
-    turn_sum = 0.0
-    max_turn_deg = 0.0
-    for i in range(1, len(seq) - 1):
-        u = seq[i] - seq[i - 1]
-        v = seq[i + 1] - seq[i]
-        nu = float(np.linalg.norm(u))
-        nv = float(np.linalg.norm(v))
-        if nu > 1e-8 and nv > 1e-8:
-            c = float(np.clip(np.dot(u, v) / (nu * nv), -1.0, 1.0))
-            ang = math.acos(c)
-            turn_sum += ang
-            max_turn_deg = max(max_turn_deg, math.degrees(ang))
-
-    # Smoothness proxy: mean second-difference magnitude (metres)
-    curvature_terms = []
-    for i in range(1, len(waypoints) - 1):
-        curvature_terms.append(float(np.linalg.norm(waypoints[i + 1] - 2.0 * waypoints[i] + waypoints[i - 1])))
-    smoothness_kappa_m = float(np.mean(curvature_terms)) if curvature_terms else 0.0
 
     # Selected-index quality: compare immediate-candidate scores from current position.
     candidate_scores = []
@@ -352,17 +362,19 @@ def evaluate_response(
         "progress_final_m": progress_final,
         "monotone_goal_progress": bool(monotone_goal_progress),
         "goal_distances_to_goal_m": goal_dists,
+        "goal_reached_tolerance_m": GOAL_REACHED_TOLERANCE_M,
+        "goal_reached_before_sequence": bool(goal_reached_before_sequence),
+        "goal_reached_after_waypoint_index": goal_reached_after_waypoint_index,
+        "kinematic_waypoint_count": len(kinematic_waypoints),
         "segment_lengths_m": seg_lengths,
         "speeds_mps": speeds,
         "accels_mps2": accels,
         "max_speed_mps": max(speeds) if speeds else 0.0,
         "max_accel_mps2": max(accels) if accels else 0.0,
         "min_clearance_m": min_clearance,
+        "segment_clearances_m": segment_clearances,
         "clearance_violations": clearance_violations,
         "clearance_is_proxy": bool(obstacle_points_ned is None or obstacle_points_ned.size == 0),
-        "smoothness_kappa_m": smoothness_kappa_m,
-        "turn_angle_sum_rad": turn_sum,
-        "max_turn_deg": max_turn_deg,
         "candidate_scores": candidate_scores,
         "selected_index_best_by_composite": bool(selected_is_best),
         "best_candidate_index_by_composite": int(best_idx),
@@ -420,11 +432,6 @@ def build_latex_style_eval_table(res: EvalResult) -> str:
         obs_value = f"Min clearance $\\approx {min_clr:.2f}\\,\\text{{m}}${suffix}"
     obs_pass = "Pass" if res.safety_pass else "Fail"
 
-    smooth_k = float(m.get("smoothness_kappa_m", 0.0))
-    max_turn = float(m.get("max_turn_deg", 0.0))
-    smooth_value = f"${smooth_k:.2f}\\,\\text{{m}}$, max turn ${max_turn:.0f}^\\circ$"
-    smooth_quality = "Good" if max_turn <= 20.0 else ("OK" if max_turn <= 40.0 else "Poor")
-
     sel_idx = int(m.get("selected_waypoint_index", 0))
     best_idx = int(m.get("best_candidate_index_by_composite", sel_idx))
     sel_best = bool(m.get("selected_index_best_by_composite", False))
@@ -445,7 +452,6 @@ def build_latex_style_eval_table(res: EvalResult) -> str:
         f"Goal progress (final wp) & {gp_final_value} & \\textbf{{{gp_final_pass}}} \\\\",
         f"Monotone dist. reduction & {mono_value} & \\textbf{{{mono_pass}}} \\\\",
         f"Obstacle safety & {obs_value} & \\textbf{{{obs_pass}}} \\\\",
-        f"Smoothness $\\kappa$ & {smooth_value} & \\textbf{{{smooth_quality}}} \\\\",
         f"Selected-index quality & {sel_value} & \\textbf{{{sel_pass}}} \\\\",
         r"\midrule",
         f"\\textbf{{Overall}} & --- & \\textbf{{{overall}}} \\\\",
