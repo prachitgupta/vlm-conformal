@@ -29,6 +29,7 @@ from llm_drone.llm.llm_prompt_common import DATASET_PROMPT_FILENAME, MPC_DEPTH_S
 from llm_drone.llm.offline_ground_truth_support import (
     ScenarioManifest,
     extract_future_waypoints,
+    gazebo_enu_to_ned,
     project_pose_to_reference_path,
     trajectory_artifact_goal_z_ned,
     trajectory_artifact_path_ned,
@@ -80,6 +81,7 @@ class DatasetGeneratorExecuter(Node):
         self.reference_path_ned = trajectory_artifact_path_ned(self.trajectory)
         if self.reference_path_ned.shape[0] < 2:
             raise ValueError('trajectory_json must contain at least 2 reference points')
+        self._normalize_offline_reference_to_local_frame()
 
         self.trajectory_dt_s = float(self.trajectory.get('dt_s', 0.1))
         playback_speed_scale = max(1e-3, float(self.get_parameter('playback_speed_scale').value))
@@ -152,6 +154,41 @@ class DatasetGeneratorExecuter(Node):
             f'trajectory_json={trajectory_json} output_csv={self.csv_writer.output_path} '
             f'replay_dt_s={self.replay_dt_s:.3f} '
             f'waypoint_acceptance_radius_m={self.waypoint_acceptance_radius_m:.2f}'
+        )
+
+    def _normalize_offline_reference_to_local_frame(self) -> None:
+        if self.scenario_manifest is None:
+            return
+
+        start_pose = self.scenario_manifest.start_pose_enu
+        start_x_enu = float(start_pose.x)
+        start_y_enu = float(start_pose.y)
+        start_z_enu = float(start_pose.z)
+        start_ned = gazebo_enu_to_ned(start_x_enu, start_y_enu, start_z_enu)
+        xy_offset_ned = np.array([float(start_ned[0]), float(start_ned[1])], dtype=float)
+
+        # PX4 local odometry is reported in a local NED frame rooted near the
+        # vehicle home/start position, while offline trajectories are generated
+        # in absolute world coordinates. Shift the offline assets into that
+        # local frame so replay can start for translated worlds as well.
+        self.reference_path_ned[:, 0] -= xy_offset_ned[0]
+        self.reference_path_ned[:, 1] -= xy_offset_ned[1]
+
+        self.scenario_manifest.start_pose_enu.x = 0.0
+        self.scenario_manifest.start_pose_enu.y = 0.0
+        self.scenario_manifest.goal_pose_enu.x -= start_x_enu
+        self.scenario_manifest.goal_pose_enu.y -= start_y_enu
+        if self.scenario_manifest.spawn_pose_enu is not None:
+            self.scenario_manifest.spawn_pose_enu.x -= start_x_enu
+            self.scenario_manifest.spawn_pose_enu.y -= start_y_enu
+
+        for obstacle in self.scenario_manifest.obstacles:
+            obstacle.position.x -= start_x_enu
+            obstacle.position.y -= start_y_enu
+
+        self.get_logger().info(
+            'Normalized offline reference path to local PX4 frame '
+            f'using start offset NED=({xy_offset_ned[0]:.2f}, {xy_offset_ned[1]:.2f})'
         )
 
     def _now_s(self) -> float:
