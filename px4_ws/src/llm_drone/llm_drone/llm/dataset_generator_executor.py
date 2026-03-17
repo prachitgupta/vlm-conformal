@@ -12,6 +12,7 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path as RosPath
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import Image
 
 from llm_drone.llm.dataset_pipeline_common import (
@@ -137,14 +138,16 @@ class DatasetGeneratorExecuter(Node):
         self.create_subscription(
             VehicleOdometry,
             '/fmu/out/vehicle_odometry',
-            self.vehicle_odometry_callback,
+            self.vehicle_odometry_raw_callback,
             qos_profile_sensor_data,
+            raw=True,
         )
         self.create_subscription(
             Image,
             '/depth_camera',
-            self.depth_image_callback,
+            self.depth_image_raw_callback,
             qos_profile_sensor_data,
+            raw=True,
         )
         self.create_timer(0.05, self._publish_offboard_heartbeat)
         self.create_timer(self.replay_dt_s, self._replay_step)
@@ -193,6 +196,29 @@ class DatasetGeneratorExecuter(Node):
 
     def _now_s(self) -> float:
         return float(self.get_clock().now().nanoseconds) * 1e-9
+
+    def _deserialize_subscription_message(self, payload: bytes, msg_type, topic_name: str):
+        try:
+            return deserialize_message(payload, msg_type)
+        except Exception as exc:
+            self.get_logger().warn(
+                f'Skipping malformed sample on {topic_name}: {exc} '
+                f'(payload_bytes={len(payload)})',
+                throttle_duration_sec=5.0,
+            )
+            return None
+
+    def vehicle_odometry_raw_callback(self, payload: bytes) -> None:
+        msg = self._deserialize_subscription_message(payload, VehicleOdometry, '/fmu/out/vehicle_odometry')
+        if msg is None:
+            return
+        self.vehicle_odometry_callback(msg)
+
+    def depth_image_raw_callback(self, payload: bytes) -> None:
+        msg = self._deserialize_subscription_message(payload, Image, '/depth_camera')
+        if msg is None:
+            return
+        self.depth_image_callback(msg)
 
     @staticmethod
     def _quaternion_to_yaw(w: float, x: float, y: float, z: float) -> float:
@@ -435,7 +461,18 @@ def main(args=None):
     node = None
     try:
         node = DatasetGeneratorExecuter()
-        rclpy.spin(node)
+        while rclpy.ok():
+            try:
+                rclpy.spin_once(node, timeout_sec=0.1)
+            except RuntimeError as exc:
+                message = str(exc)
+                if 'Unable to convert call argument to Python object' not in message:
+                    raise
+                node.get_logger().warn(
+                    'Skipping malformed subscription sample during offline replay: '
+                    f'{message}',
+                    throttle_duration_sec=5.0,
+                )
     except KeyboardInterrupt:
         pass
     finally:

@@ -101,6 +101,6 @@ tmux new-session -d -s llm_dataset "bash -lc '
   '"
 
 
-ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob '*.sdf' --skip-existing-csv --continue-on-error --2>&1 | tee /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs/overnight_batch.log
+ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob '*.sdf' --skip-existing-csv --continue-on-error 2>&1 | tee /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs/overnight_batch.log
 
 ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob 'run6.sdf' --enable-gui

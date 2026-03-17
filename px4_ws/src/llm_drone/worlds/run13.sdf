@@ -88,7 +88,7 @@
     </model>
     <model name='lane_left_wall'>
       <static>false</static>
-      <pose>16 6 2.4999873987411871 -1.5452868411422002e-16 1.6520055580100191e-18 3.8614553100829292e-20</pose>
+      <pose>15.436311224357818 2.7322387336329408 2.4999872408807806 -8.0747196741539582e-07 -8.9138525958065754e-09 1.4727183036375318e-07</pose>
       <link name='link'>
         <collision name='collision'>
           <geometry>
@@ -134,7 +134,7 @@
     </model>
     <model name='lane_right_wall'>
       <static>false</static>
-      <pose>16 -6 2.4999873987411871 -1.2772232356273819e-16 9.5017205798471489e-18 1.3757542690107612e-19</pose>
+      <pose>16 -4.7976698875427246 2.4999879531577283 -8.9185550480727362e-17 5.2674483749006176e-18 2.1402072347727736e-19</pose>
       <link name='link'>
         <collision name='collision'>
           <geometry>
@@ -180,7 +180,7 @@
     </model>
     <model name='block_01'>
       <static>false</static>
-      <pose>7 2.1000000000000001 1.541397757495478 1.2680087850584526e-16 1.5282294768331402e-16 3.8972457496037561e-19</pose>
+      <pose>7 2.1000000000000001 1.5999998682091516 1.213765386392223e-16 1.5371901239552927e-16 -4.3427022583894457e-18</pose>
       <link name='link'>
         <collision name='collision'>
           <geometry>
@@ -268,7 +268,7 @@
     </model>
     <model name='block_03'>
       <static>false</static>
-      <pose>17.472225189208984 0.019982300698757172 1.2892908151842213 -1.274271382229734e-16 1.3993836710406826e-16 3.4312231273259872e-19</pose>
+      <pose>17.472200393676758 0.39522233605384827 1.3506830785443666 -1.2204143312586427e-16 1.4387509609408172e-16 -2.682961555773993e-19</pose>
       <link name='link'>
         <collision name='collision'>
           <geometry>
@@ -312,7 +312,7 @@
     </model>
     <model name='block_04'>
       <static>false</static>
-      <pose>18 -2.5 1.5414177564121452 -1.3854219562165449e-16 8.8542600213804409e-17 2.9782946249753337e-19</pose>
+      <pose>13.89579963684082 -3.9877727031707764 1.5999998694408795 -1.4856133970210832e-16 1.2970680524676429e-16 -8.2543074614688196e-19</pose>
       <link name='link'>
         <collision name='collision'>
           <geometry>
@@ -356,7 +356,7 @@
     </model>
     <model name='block_05'>
       <static>false</static>
-      <pose>22 2 1.5999991336223707 4.9828659882484169e-17 4.31275027140564e-17 1.6374324327017893e-19</pose>
+      <pose>22 2 1.5999992089195469 7.533105745545161e-17 5.2093644940365218e-17 2.0606915202690502e-19</pose>
       <link name='link'>
         <collision name='collision'>
           <geometry>
@@ -400,7 +400,7 @@
     </model>
     <model name='block_06'>
       <static>false</static>
-      <pose>26 -1.8 1.5414377553288123 -5.409442603491605e-17 1.260612388108052e-16 1.3198593756283391e-18</pose>
+      <pose>26 -1.8 1.5999998682091516 -5.2718210809088764e-17 1.2651731814549251e-16 6.3680309664652493e-18</pose>
       <link name='link'>
         <collision name='collision'>
           <geometry>
@@ -576,7 +576,7 @@
     </model>
     <model name='start_marker'>
       <static>true</static>
-      <pose>2 0 0.02 0 0 0</pose>
+      <pose>11.846780776977539 -1.2698999643325806 2.4097199440002441 0 0 0</pose>
       <link name='link'>
         <gravity>false</gravity>
         <self_collide>false</self_collide>
@@ -676,7 +676,7 @@
     </model>
     <model name='goal_gate_left'>
       <static>false</static>
-      <pose>33 2.793034553527832 2.4999999991915036 -1.484992427854716e-20 -2.1512123182014012e-20 -3.9454630471100238e-21</pose>
+      <pose>33.023240677051803 2.7930221432873501 2.5000032794509277 6.509593309239957e-10 1.3764718166370093e-05 4.9830461355788942e-05</pose>
       <link name='link'>
         <collision name='collision'>
           <geometry>
@@ -758,6 +758,11 @@
       </link>
       <self_collide>false</self_collide>
     </model>
+    <include>
+      <uri>file:///home/prachit/PX4-Autopilot/Tools/simulation/gz/models/x500_depth</uri>
+      <name>x500_depth_0</name>
+      <pose>-7.8598832576202057e-10 -2.8019057271767571e-17 -0.013000187350032083 -4.6416876776389884e-17 5.4763007999922862e-09 -1.1735658213062192e-18</pose>
+    </include>
     <light name='sunUTC' type='directional'>
       <pose>0 0 500 0 0 0</pose>
       <cast_shadows>true</cast_shadows>
