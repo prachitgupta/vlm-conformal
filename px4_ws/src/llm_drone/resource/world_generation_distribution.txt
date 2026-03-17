@@ -1,0 +1,95 @@
+Recommended world-generation distribution for fine-tuning
+
+Target principle:
+Use structured diversity, not maximum randomness. The goal is to cover many planning situations while keeping worlds physically valid, solvable, and stable in PX4/Gazebo.
+
+Suggested mix for 100 worlds:
+
+- 25% easy corridor worlds
+  Wide open lane, few obstacles, mostly straight progress.
+  Purpose: teach stable baseline behavior and simple goal-directed motion.
+
+- 20% offset-start/offset-goal worlds
+  Start or goal shifted laterally, requiring a nontrivial entry or merge.
+  Purpose: teach the model not to overfit to centered starts and straight-line plans.
+
+- 20% bottleneck worlds
+  One or two narrow but clearly feasible passages.
+  Purpose: teach passage selection, commitment, and careful waypoint placement.
+
+- 20% cluttered but traversable worlds
+  Several obstacles distributed through the route, but with clear free-space if planned well.
+  Purpose: teach continuous obstacle negotiation over longer horizons.
+
+- 15% deceptive-gap worlds
+  Visually tempting but poor routes, partial dead ends, asymmetric clutter, or gaps that look open but lead to bad continuation.
+  Purpose: teach better global judgment instead of greedy local choices.
+
+Difficulty target inside the full set:
+
+- 30% easy
+- 50% medium
+- 20% hard
+
+Recommended randomization dimensions:
+
+- Start x/y position within a safe spawn region
+- Goal x/y position with varied lateral offset and route length
+- Obstacle count
+- Obstacle radius/size
+- Obstacle spacing
+- Corridor width
+- Gate width
+- Left/right asymmetry
+- Mid-course turning angle
+- Whether clutter is front-loaded, mid-route, or near-goal
+
+What to keep stable:
+
+- World name and plugin setup compatible with the existing pipeline
+- Valid start_marker and goal_marker naming
+- Reasonable altitude assumptions
+- Consistent lane boundary structure unless intentionally testing boundary variation
+
+Quality gates for each generated world:
+
+- Start marker should have generous free space around it
+- Goal marker should not be embedded near obstacle edges
+- Drone should spawn upright and stable
+- PX4 should arm and enter OFFBOARD reliably
+- Replay should complete without malformed logs or partial CSVs
+- Planner path should be collision-free and nontrivial
+
+Suggested geometric rules of thumb:
+
+- Start clearance: ideally >= 4 m from nearest obstacle
+- Goal clearance: ideally >= 2.5 to 3 m from nearest obstacle
+- Do not place the first decisive obstacle immediately on top of spawn
+- Avoid excessive symmetry across too many worlds
+- Avoid near-duplicate worlds with tiny coordinate perturbations only
+
+Dataset balance guidance:
+
+- Do not let the dataset be dominated by straight, obstacle-light worlds
+- Do not let too many samples be pathological or unstable
+- Keep some long-route worlds and some short decisive worlds
+- Include both single-choice and multi-choice navigation situations
+
+What to discard:
+
+- Worlds that fail PX4 preflight repeatedly
+- Worlds that create partial or corrupted dataset rows
+- Worlds with geometry that causes unstable estimator behavior
+- Worlds that are effectively duplicates of existing ones
+- Worlds where the only valid behavior is trivial hovering or near-zero motion
+
+A simple generation recipe:
+
+1. Sample a world bucket from the percentage mix above.
+2. Sample parameters only within that bucket's constrained ranges.
+3. Run a one-world validation pass.
+4. Keep the world only if planner, PX4, and dataset replay all succeed cleanly.
+
+Practical takeaway:
+
+If time is limited, bias toward medium-difficulty bottleneck, offset-start, and cluttered worlds. Those usually add more fine-tuning value than generating many more easy straight-corridor scenes.
