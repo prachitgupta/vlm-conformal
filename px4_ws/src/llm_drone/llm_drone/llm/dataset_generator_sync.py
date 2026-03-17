@@ -174,19 +174,24 @@ class SyncDatasetGenerator(Node):
 
     def _now_s(self) -> float:
         return float(self.get_clock().now().nanoseconds) * 1e-9
-
+ 
     def odometry_callback(self, msg: Odometry) -> None:
         q = msg.pose.pose.orientation
+        rotation_enu_body = quaternion_to_rotation_matrix(q.w, q.x, q.y, q.z)
+        rotation_enu_to_ned = np.array(
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]],
+            dtype=float,
+        )
         self.scene_sync.push_odometry(
             position=np.array(
-                [msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z],
+                [msg.pose.pose.position.y, msg.pose.pose.position.x, -msg.pose.pose.position.z],
                 dtype=float,
             ),
             velocity=np.array(
-                [msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z],
+                [msg.twist.twist.linear.y, msg.twist.twist.linear.x, -msg.twist.twist.linear.z],
                 dtype=float,
             ),
-            rotation_ned_body=quaternion_to_rotation_matrix(q.w, q.x, q.y, q.z),
+            rotation_ned_body=rotation_enu_to_ned @ rotation_enu_body,
         )
 
     def vehicle_odometry_callback(self, msg: VehicleOdometry) -> None:

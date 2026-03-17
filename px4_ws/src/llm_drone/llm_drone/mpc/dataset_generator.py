@@ -180,17 +180,22 @@ class LLMFineTuneDatasetGenerator(Node):
 
     def odometry_callback(self, msg):
         self.current_position = np.array([
-            msg.pose.pose.position.x,
             msg.pose.pose.position.y,
-            msg.pose.pose.position.z,
+            msg.pose.pose.position.x,
+            -msg.pose.pose.position.z,
         ])
         self.current_velocity = np.array([
-            msg.twist.twist.linear.x,
             msg.twist.twist.linear.y,
-            msg.twist.twist.linear.z,
+            msg.twist.twist.linear.x,
+            -msg.twist.twist.linear.z,
         ])
         q = msg.pose.pose.orientation
-        self.rotation_ned_body = self.quaternion_to_rotation_matrix(q.w, q.x, q.y, q.z)
+        rotation_enu_body = self.quaternion_to_rotation_matrix(q.w, q.x, q.y, q.z)
+        rotation_enu_to_ned = np.array(
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]],
+            dtype=float,
+        )
+        self.rotation_ned_body = rotation_enu_to_ned @ rotation_enu_body
         self.odom_stamp_s = self.stamp_to_sec(msg.header.stamp)
 
     def vehicle_odometry_callback(self, msg):

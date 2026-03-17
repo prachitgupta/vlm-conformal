@@ -80,6 +80,11 @@ def _compress_consecutive_waypoints(
     return compressed
 
 
+def _ned_xy_to_enu_xy(point: np.ndarray) -> np.ndarray:
+    point = np.asarray(point, dtype=float)
+    return np.array([point[1], point[0]], dtype=float)
+
+
 def _segment_min_signed_distance_to_obstacles_xy(
     a: np.ndarray,
     b: np.ndarray,
@@ -87,8 +92,8 @@ def _segment_min_signed_distance_to_obstacles_xy(
     *,
     sample_spacing_m: float = DEFAULT_GRID_RESOLUTION_M,
 ) -> float:
-    a_xy = np.asarray(a[:2], dtype=float)
-    b_xy = np.asarray(b[:2], dtype=float)
+    a_xy = _ned_xy_to_enu_xy(a[:2])
+    b_xy = _ned_xy_to_enu_xy(b[:2])
     distance = float(np.linalg.norm(b_xy - a_xy))
     if distance < 1e-9:
         return float(min_signed_distance_to_obstacles(np.asarray([a_xy], dtype=float), obstacles))
@@ -262,6 +267,8 @@ def evaluate_response(
         "accels_mps2": accels,
         "max_speed_mps": max(speeds) if speeds else 0.0,
         "max_accel_mps2": max(accels) if accels else 0.0,
+        "v_max_limit_mps": float(v_max),
+        "a_max_limit_mps2": float(a_max),
         "min_clearance_m": min_clearance,
         "segment_clearances_m": segment_clearances,
         "clearance_violations": clearance_violations,

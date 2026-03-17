@@ -191,6 +191,33 @@ def _compress_consecutive_waypoints(
     return compressed
 
 
+def _ned_xy_to_enu_xy(point: np.ndarray) -> np.ndarray:
+    point = np.asarray(point, dtype=float)
+    return np.array([point[1], point[0]], dtype=float)
+
+
+def _segment_min_signed_distance_to_obstacles_xy(
+    a: np.ndarray,
+    b: np.ndarray,
+    obstacles,
+    *,
+    sample_spacing_m: float = 0.25,
+) -> float:
+    a_xy = _ned_xy_to_enu_xy(a[:2])
+    b_xy = _ned_xy_to_enu_xy(b[:2])
+    distance = float(np.linalg.norm(b_xy - a_xy))
+    if distance < 1e-9:
+        samples = np.asarray([a_xy], dtype=float)
+    else:
+        count = max(2, int(math.ceil(distance / max(0.05, float(sample_spacing_m)))) + 1)
+        samples = np.linspace(a_xy, b_xy, num=count)
+    min_distance = float('inf')
+    for point_xy in samples:
+        for obstacle in obstacles:
+            min_distance = min(min_distance, float(obstacle.signed_distance_xy(point_xy)))
+    return float(min_distance)
+
+
 def parse_llm_response(text: str) -> dict[str, Any]:
     s = text.find("{")
     e = text.rfind("}") + 1
@@ -299,7 +326,25 @@ def evaluate_response(
     clearance_violations = 0
     segment_clearances: list[float] = []
     safety_pass = True
-    if obstacle_points_ned is not None and obstacle_points_ned.size > 0:
+    if obstacle_specs:
+        obstacle_points = obstacle_specs
+        min_clearance = float("inf")
+        for i in range(len(seq) - 1):
+            a = seq[i]
+            b = seq[i + 1]
+            segment_min_clearance = _segment_min_signed_distance_to_obstacles_xy(a, b, obstacle_points)
+            segment_clearances.append(float(segment_min_clearance))
+            if segment_min_clearance < min_clearance:
+                min_clearance = float(segment_min_clearance)
+            if segment_min_clearance < safety_radius:
+                clearance_violations += 1
+        safety_pass = bool(min_clearance >= safety_radius)
+        if not safety_pass:
+            warnings.append(
+                f"Safety violation: min_clearance={min_clearance:.2f} m < safety_radius={safety_radius:.2f} m "
+                f"(violating_segments={clearance_violations})"
+            )
+    elif obstacle_points_ned is not None and obstacle_points_ned.size > 0:
         obstacle_points = np.asarray(obstacle_points_ned, dtype=float)
         min_clearance = float("inf")
         for i in range(len(seq) - 1):
@@ -371,10 +416,13 @@ def evaluate_response(
         "accels_mps2": accels,
         "max_speed_mps": max(speeds) if speeds else 0.0,
         "max_accel_mps2": max(accels) if accels else 0.0,
+        "v_max_limit_mps": float(v_max),
+        "a_max_limit_mps2": float(a_max),
         "min_clearance_m": min_clearance,
         "segment_clearances_m": segment_clearances,
         "clearance_violations": clearance_violations,
-        "clearance_is_proxy": bool(obstacle_points_ned is None or obstacle_points_ned.size == 0),
+        "clearance_is_proxy": bool((not obstacle_specs) and (obstacle_points_ned is None or obstacle_points_ned.size == 0)),
+        "clearance_source": "manifest_obstacles" if obstacle_specs else ("depth_points" if obstacle_points_ned is not None and obstacle_points_ned.size > 0 else "none"),
         "candidate_scores": candidate_scores,
         "selected_index_best_by_composite": bool(selected_is_best),
         "best_candidate_index_by_composite": int(best_idx),
@@ -570,17 +618,22 @@ class EvalAndExecuteNode(Node):
 
     def odometry_callback(self, msg: Odometry) -> None:
         self.current_position = np.array([
-            float(msg.pose.pose.position.x),
             float(msg.pose.pose.position.y),
-            float(msg.pose.pose.position.z),
+            float(msg.pose.pose.position.x),
+            -float(msg.pose.pose.position.z),
         ], dtype=float)
         self.current_velocity = np.array([
-            float(msg.twist.twist.linear.x),
             float(msg.twist.twist.linear.y),
-            float(msg.twist.twist.linear.z),
+            float(msg.twist.twist.linear.x),
+            -float(msg.twist.twist.linear.z),
         ], dtype=float)
         q = msg.pose.pose.orientation
-        self.rotation_ned_body = quaternion_to_rotation_matrix(float(q.w), float(q.x), float(q.y), float(q.z))
+        rotation_enu_body = quaternion_to_rotation_matrix(float(q.w), float(q.x), float(q.y), float(q.z))
+        rotation_enu_to_ned = np.array(
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]],
+            dtype=float,
+        )
+        self.rotation_ned_body = rotation_enu_to_ned @ rotation_enu_body
         self.odom_received = True
 
     def vehicle_odometry_callback(self, msg: VehicleOdometry) -> None:

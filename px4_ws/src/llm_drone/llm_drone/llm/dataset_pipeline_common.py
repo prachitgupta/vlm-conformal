@@ -418,12 +418,9 @@ def build_label_reasoning(eval_result: EvalResult) -> str:
     goal_reached_tolerance_m = float(metrics.get('goal_reached_tolerance_m', 0.35))
     goal_reached_before_sequence = bool(metrics.get('goal_reached_before_sequence', False))
     goal_reached_after_waypoint_index = metrics.get('goal_reached_after_waypoint_index', None)
-    segment_lengths = [float(v) for v in metrics.get('segment_lengths_m', [])]
-    speeds = [float(v) for v in metrics.get('speeds_mps', [])]
-    accels = [float(v) for v in metrics.get('accels_mps2', [])]
-    max_speed = float(metrics.get('max_speed_mps', 0.0))
-    max_accel = float(metrics.get('max_accel_mps2', 0.0))
     kinematic_waypoint_count = int(metrics.get('kinematic_waypoint_count', 0))
+    v_max_limit = float(metrics.get('v_max_limit_mps', 15.0))
+    a_max_limit = float(metrics.get('a_max_limit_mps2', 8.0))
     min_clearance = metrics.get('min_clearance_m', None)
     clearance_violations = int(metrics.get('clearance_violations', 0))
     clearance_is_proxy = bool(metrics.get('clearance_is_proxy', True))
@@ -440,9 +437,6 @@ def build_label_reasoning(eval_result: EvalResult) -> str:
     progress_text = 'passes' if eval_result.progress_pass else 'fails'
     safety_text = 'passes' if eval_result.safety_pass else 'fails'
     monotone_text = 'monotonic' if monotone_goal_progress else 'non-monotonic'
-    segment_text = ', '.join(f'{value:.2f}' for value in segment_lengths) if segment_lengths else 'n/a'
-    speed_text = ', '.join(f'{value:.2f}' for value in speeds) if speeds else 'n/a'
-    accel_text = ', '.join(f'{value:.2f}' for value in accels) if accels else 'n/a'
     if goal_reached_before_sequence:
         terminal_text = (
             f'Goal has already been reached at the reference anchor within {goal_reached_tolerance_m:.2f} m tolerance.'
@@ -460,8 +454,8 @@ def build_label_reasoning(eval_result: EvalResult) -> str:
         f'from goal immediately and to {distance_final:.2f} m by the final waypoint, so progress is '
         f'{progress_selected:.2f} m selected / {progress_final:.2f} m final and {progress_text} '
         f'with {monotone_text} goal-distance reduction. Kinematics is evaluated on {kinematic_waypoint_count} unique '
-        f'label waypoint(s), excluding consecutive duplicate terminal holds. Segment lengths [{segment_text}] imply speeds [{speed_text}] '
-        f'and accelerations [{accel_text}], giving max speed {max_speed:.2f} m/s and max accel {max_accel:.2f} m/s^2, '
+        f'label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays '
+        f'within the configured bounds speed <= {v_max_limit:.2f} m/s and acceleration <= {a_max_limit:.2f} m/s^2, '
         f'so kinematics {kinematic_text}. {terminal_text} Safety {safety_text}: {clearance_text}.'
     )
 
