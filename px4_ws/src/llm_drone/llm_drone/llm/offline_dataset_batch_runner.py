@@ -42,6 +42,7 @@ DEFAULT_PX4_DIR = Path('/home/prachit/PX4-Autopilot')
 DEFAULT_LAUNCH_SCRIPT = DEFAULT_PX4_DIR / 'Tools' / 'simulation' / 'gz' / 'launch_obstacle_avoidance_x500.sh'
 MISSION_READY_MARKER = 'Drone is airborne and in OFFBOARD mode.'
 DATASET_DONE_MARKER = 'Replay reached the end of the reference trajectory'
+CLEANUP_WAIT_S = 3.0
 
 
 @dataclass
@@ -201,6 +202,54 @@ def _base_env() -> dict[str, str]:
     return env
 
 
+def _stale_process_patterns(px4_dir: Path) -> list[str]:
+    return [
+        str((px4_dir / 'build' / 'px4_sitl_default' / 'bin' / 'px4').resolve()),
+        'gz sim',
+        'MicroXRCEAgent udp4 -p 8888',
+        'ros_gz_bridge parameter_bridge',
+        'llm_drone mission_executor --sim',
+        'llm_drone dataset_generator_executor',
+    ]
+
+
+def _matching_pids(pattern: str) -> list[int]:
+    result = subprocess.run(
+        ['pgrep', '-f', pattern],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode not in (0, 1):
+        return []
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        pids.append(pid)
+    return pids
+
+
+def _ensure_no_stale_sim_processes(px4_dir: Path) -> None:
+    patterns = _stale_process_patterns(px4_dir)
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        killed_any = False
+        for pattern in patterns:
+            for pid in _matching_pids(pattern):
+                try:
+                    os.kill(pid, sig)
+                    killed_any = True
+                except ProcessLookupError:
+                    continue
+        if not killed_any:
+            return
+        time.sleep(CLEANUP_WAIT_S if sig == signal.SIGTERM else 1.0)
+
+
 def _generate_artifacts(world_path: Path, args: argparse.Namespace) -> GeneratedArtifacts:
     output_root = Path(args.output_root).expanduser().resolve()
     manifest_dir = output_root / 'manifests'
@@ -300,6 +349,8 @@ def _start_processes(
     run_csv: Path,
     args: argparse.Namespace,
 ) -> tuple[ManagedProcess, ManagedProcess, ManagedProcess, ManagedProcess, ManagedProcess]:
+    _ensure_no_stale_sim_processes(Path(args.px4_dir).expanduser().resolve())
+
     spawn_pose = _spawn_pose_from_manifest(artifacts.manifest)
     gazebo_world_name = _gazebo_world_name_from_manifest(artifacts.manifest)
     world_run_dir = Path(args.output_root).expanduser().resolve() / 'batch_logs' / artifacts.world_path.stem
@@ -383,9 +434,10 @@ def _start_processes(
     return launcher, xrce_agent, bridge, mission, dataset
 
 
-def _cleanup_processes(processes: list[ManagedProcess], stop_timeout_s: float) -> None:
+def _cleanup_processes(processes: list[ManagedProcess], stop_timeout_s: float, px4_dir: Path) -> None:
     for proc in reversed(processes):
         proc.stop(grace_s=stop_timeout_s)
+    _ensure_no_stale_sim_processes(px4_dir)
 
 
 def _run_single_world(world_path: Path, args: argparse.Namespace) -> None:
@@ -431,7 +483,11 @@ def _run_single_world(world_path: Path, args: argparse.Namespace) -> None:
         merged_csv = _merged_csv_path(args)
         _merge_run_csv(run_csv, merged_csv)
     finally:
-        _cleanup_processes([proc for proc in processes if proc.process is not None], args.process_stop_timeout_s)
+        _cleanup_processes(
+            [proc for proc in processes if proc.process is not None],
+            args.process_stop_timeout_s,
+            Path(args.px4_dir).expanduser().resolve(),
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

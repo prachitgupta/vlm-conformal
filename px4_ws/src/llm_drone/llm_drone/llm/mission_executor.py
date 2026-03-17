@@ -11,7 +11,7 @@ Usage:
 
 import asyncio
 import argparse
-from mavsdk import System
+from mavsdk import System, telemetry
 from mavsdk.offboard import OffboardError, VelocityBodyYawspeed
 
 
@@ -57,6 +57,58 @@ class MissionExecutor:
             break
         
         return False
+
+    async def get_flight_mode(self):
+        """Return the current PX4 flight mode."""
+        async for mode in self.drone.telemetry.flight_mode():
+            return mode
+        return telemetry.FlightMode.UNKNOWN
+
+    async def ensure_hold_mode(self, timeout_s=8.0):
+        """Best-effort: force HOLD before arming if the vehicle isn't already there."""
+        mode = await self.get_flight_mode()
+        print(f"  Current flight mode before arming: {mode.name}")
+        if mode == telemetry.FlightMode.HOLD:
+            return True
+
+        print("  Switching vehicle to HOLD before arming...")
+        try:
+            await self.drone.action.hold()
+        except Exception as exc:
+            print(f"  ⚠️ HOLD command failed: {exc}")
+            return False
+
+        deadline = asyncio.get_running_loop().time() + float(timeout_s)
+        async for observed_mode in self.drone.telemetry.flight_mode():
+            if observed_mode == telemetry.FlightMode.HOLD:
+                print("  ✅ Vehicle is now in HOLD")
+                return True
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+
+        latest_mode = await self.get_flight_mode()
+        print(f"  ⚠️ Timed out waiting for HOLD; latest mode is {latest_mode.name}")
+        return latest_mode == telemetry.FlightMode.HOLD
+
+    async def arm_with_retry(self, max_attempts=3):
+        """Arm with a HOLD-mode recovery path for transient command denials."""
+        last_error = None
+        for attempt in range(1, int(max_attempts) + 1):
+            if attempt == 1:
+                await self.ensure_hold_mode()
+            try:
+                await self.drone.action.arm()
+                return
+            except Exception as exc:
+                last_error = exc
+                print(f"  ⚠️ Arm attempt {attempt}/{max_attempts} failed: {exc}")
+                if attempt >= int(max_attempts):
+                    break
+                await self.ensure_hold_mode()
+                await asyncio.sleep(1.0)
+
+        if last_error is not None:
+            raise last_error
     
     async def arm_and_takeoff(self, altitude=1.5):
         """Arm and takeoff"""
@@ -67,7 +119,7 @@ class MissionExecutor:
         
         # Arm
         self.mission_state = "ARMING"
-        await self.drone.action.arm()
+        await self.arm_with_retry()
         print("  Armed")
         
         # Takeoff
