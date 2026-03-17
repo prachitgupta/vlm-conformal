@@ -64,6 +64,53 @@ class MissionExecutor:
             return mode
         return telemetry.FlightMode.UNKNOWN
 
+    async def get_armed(self):
+        """Return whether PX4 currently reports the vehicle as armed."""
+        async for armed in self.drone.telemetry.armed():
+            return bool(armed)
+        return False
+
+    async def get_in_air(self):
+        """Return whether PX4 currently reports the vehicle as airborne."""
+        async for in_air in self.drone.telemetry.in_air():
+            return bool(in_air)
+        return False
+
+    async def get_relative_altitude_m(self):
+        """Return current relative altitude in meters."""
+        async for position in self.drone.telemetry.position():
+            return float(position.relative_altitude_m)
+        return 0.0
+
+    async def wait_until_armed(self, timeout_s=8.0):
+        """Wait until the vehicle reports armed."""
+        deadline = asyncio.get_running_loop().time() + float(timeout_s)
+        while asyncio.get_running_loop().time() < deadline:
+            if await self.get_armed():
+                return True
+            await asyncio.sleep(0.2)
+        return await self.get_armed()
+
+    async def wait_until_in_air(self, timeout_s=20.0):
+        """Wait until the vehicle reports airborne."""
+        deadline = asyncio.get_running_loop().time() + float(timeout_s)
+        while asyncio.get_running_loop().time() < deadline:
+            if await self.get_in_air():
+                return True
+            await asyncio.sleep(0.2)
+        return await self.get_in_air()
+
+    async def wait_until_altitude(self, target_altitude_m, timeout_s=25.0):
+        """Wait until the vehicle reaches the requested relative altitude."""
+        deadline = asyncio.get_running_loop().time() + float(timeout_s)
+        last_altitude_m = await self.get_relative_altitude_m()
+        while asyncio.get_running_loop().time() < deadline:
+            last_altitude_m = await self.get_relative_altitude_m()
+            if last_altitude_m > float(target_altitude_m) * 0.95:
+                return True, last_altitude_m
+            await asyncio.sleep(0.2)
+        return False, last_altitude_m
+
     async def ensure_hold_mode(self, timeout_s=8.0):
         """Best-effort: force HOLD before arming if the vehicle isn't already there."""
         mode = await self.get_flight_mode()
@@ -98,7 +145,9 @@ class MissionExecutor:
                 await self.ensure_hold_mode()
             try:
                 await self.drone.action.arm()
-                return
+                if await self.wait_until_armed(timeout_s=6.0):
+                    return
+                raise RuntimeError("Arm command returned, but vehicle never reported armed")
             except Exception as exc:
                 last_error = exc
                 print(f"  ⚠️ Arm attempt {attempt}/{max_attempts} failed: {exc}")
@@ -110,8 +159,8 @@ class MissionExecutor:
         if last_error is not None:
             raise last_error
     
-    async def arm_and_takeoff(self, altitude=1.5):
-        """Arm and takeoff"""
+    async def arm_and_takeoff(self, altitude=1.5, takeoff_timeout_s=25.0):
+        """Arm and takeoff, failing fast if the climb never starts/finishes."""
         print(f"\n🚁 Arming and taking off to {altitude}m...")
         
         # Set takeoff altitude
@@ -125,38 +174,108 @@ class MissionExecutor:
         # Takeoff
         self.mission_state = "TAKEOFF"
         await self.drone.action.takeoff()
-        
-        # Wait for altitude
-        async for position in self.drone.telemetry.position():
-            altitude_reached = position.relative_altitude_m > altitude * 0.95
-            
-            if altitude_reached:
-                print(f"  ✅ Reached altitude: {position.relative_altitude_m:.2f}m")
-                self.mission_state = "HOVERING"
-                break
-            
-            await asyncio.sleep(0.1)
+
+        if not await self.wait_until_in_air(timeout_s=min(10.0, float(takeoff_timeout_s))):
+            raise RuntimeError("Takeoff command accepted, but vehicle never reported airborne")
+
+        altitude_reached, latest_altitude_m = await self.wait_until_altitude(
+            altitude,
+            timeout_s=float(takeoff_timeout_s),
+        )
+        if not altitude_reached:
+            raise RuntimeError(
+                f"Takeoff timed out before reaching altitude {float(altitude):.2f}m "
+                f"(latest={latest_altitude_m:.2f}m)"
+            )
+
+        print(f"  ✅ Reached altitude: {latest_altitude_m:.2f}m")
+        self.mission_state = "HOVERING"
         
         # Extra stabilization time
         await asyncio.sleep(2)
     
-    async def enable_offboard_mode(self):
-        """Enable offboard control mode"""
+    async def enable_offboard_mode(self, max_attempts=3):
+        """Enable offboard control mode, retrying transient PX4 denials."""
         print("\n📡 Enabling offboard mode...")
-        
-        # Set initial setpoint
-        await self.drone.offboard.set_velocity_body(
-            VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
-        )
-        
+        last_error = None
+        for attempt in range(1, int(max_attempts) + 1):
+            try:
+                await self.drone.offboard.set_velocity_body(
+                    VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
+                )
+                await asyncio.sleep(0.1)
+                await self.drone.offboard.start()
+                print("  ✅ Offboard mode enabled")
+                self.mission_state = "OFFBOARD"
+                return True
+            except OffboardError as exc:
+                last_error = exc
+                print(f"  ⚠️ Offboard attempt {attempt}/{max_attempts} failed: {exc}")
+                if attempt >= int(max_attempts):
+                    break
+                await asyncio.sleep(1.0)
+
+        if last_error is not None:
+            print(f"  ❌ Failed to enable offboard: {last_error}")
+        return False
+
+    async def recover_for_retry(self):
+        """Try to reset PX4 into a clean state before the next setup attempt."""
+        print("  ↺ Resetting vehicle state before retry...")
         try:
-            await self.drone.offboard.start()
-            print("  ✅ Offboard mode enabled")
-            self.mission_state = "OFFBOARD"
-            return True
-        except OffboardError as e:
-            print(f"  ❌ Failed to enable offboard: {e}")
-            return False
+            await self.drone.offboard.stop()
+        except Exception:
+            pass
+
+        if await self.get_in_air():
+            print("  Landing after failed setup attempt...")
+            try:
+                await self.drone.action.land()
+            except Exception as exc:
+                print(f"  ⚠️ Land command failed during recovery: {exc}")
+            deadline = asyncio.get_running_loop().time() + 30.0
+            while asyncio.get_running_loop().time() < deadline:
+                if not await self.get_in_air():
+                    break
+                await asyncio.sleep(0.5)
+
+        if await self.get_armed():
+            print("  Disarming after failed setup attempt...")
+            try:
+                await self.drone.action.disarm()
+            except Exception as exc:
+                print(f"  ⚠️ Disarm failed during recovery: {exc}")
+            await asyncio.sleep(1.0)
+
+        await self.ensure_hold_mode()
+        await asyncio.sleep(1.0)
+
+    async def prepare_for_external_offboard(
+        self,
+        *,
+        altitude=2.5,
+        setup_attempts=4,
+        takeoff_timeout_s=25.0,
+    ):
+        """Retry the full arm/takeoff/offboard sequence before giving up."""
+        last_error = None
+        for attempt in range(1, int(setup_attempts) + 1):
+            print(f"\n🔁 Setup attempt {attempt}/{setup_attempts}")
+            try:
+                await self.arm_and_takeoff(altitude=altitude, takeoff_timeout_s=takeoff_timeout_s)
+                if not await self.enable_offboard_mode():
+                    raise RuntimeError("Offboard start failed after retries")
+                return
+            except Exception as exc:
+                last_error = exc
+                print(f"  ⚠️ Setup attempt {attempt}/{setup_attempts} failed: {exc}")
+                if attempt >= int(setup_attempts):
+                    break
+                await self.recover_for_retry()
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Vehicle setup failed before OFFBOARD readiness")
     
     async def wait_ready_for_mpc(self):
         """Keep vehicle in offboard and wait for external MPC setpoints."""
@@ -241,14 +360,7 @@ async def run_simulation_mission():
             print("❌ Preflight checks failed")
             return
         
-        # Arm and takeoff
-        await executor.arm_and_takeoff(altitude=2.5)
-        
-        # Enable offboard
-        if not await executor.enable_offboard_mode():
-            print("❌ Failed to enable offboard mode")
-            await executor.land_at_position()
-            return
+        await executor.prepare_for_external_offboard(altitude=2.5)
         
         await executor.wait_ready_for_mpc()
         
@@ -283,8 +395,7 @@ async def run_hardware_mission():
             return
         
         # Execute mission
-        await executor.arm_and_takeoff(altitude=1.5)
-        await executor.enable_offboard_mode()
+        await executor.prepare_for_external_offboard(altitude=1.5)
         
         await executor.wait_ready_for_mpc()
         
