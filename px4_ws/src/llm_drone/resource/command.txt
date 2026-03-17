@@ -22,23 +22,83 @@ python3 live_trajectory_plot.py /home/prachit/Desktop/vlm-conformal/px4_ws/src/l
  Dry-run checklist
      Run:
 
-  ros2 run llm_drone offline_dataset_batch_runner \
-    --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/
-  llm_drone/worlds \
-    --world-glob 'run1.sdf' \
-    --dry-run
+  ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob 'run1.sdf' --dry-run
 
  Real-run checklist
      Run one world only:
 
+  ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob 'run1.sdf' --reset-merged-csv
+
+ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob '*.sdf' --continue-on-error
+
+
+
+###tmux
+
+tmux                 # start new session
+tmux new -s name     # new named session
+tmux ls              # list sessions
+tmux attach -t name  # attach to session
+tmux kill-session -t name
+tmux kill-server     # kill all sessions
+
+
+###
+
+ tmux new -s llm_dataset
+
+  Inside tmux, run:
+
+  source /opt/ros/humble/setup.bash
+  cd /home/prachit/Desktop/vlm-conformal/px4_ws
+  source install/setup.bash
+
+  mkdir -p /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs
+  mkdir -p /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/dataset/offline_ground_truth_runs
+
+  ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob '*.sdf' --reset-merged-csv --continue-on-error 2>&1 | tee /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs/overnight_batch.log
+
+  Detach from tmux with:
+
+  Ctrl+b d
+
+  Useful tmux commands later:
+
+  - reattach:
+
+  tmux attach -t llm_dataset
+
+  - list sessions:
+
+  tmux ls
+
+  - kill session after done:
+
+  tmux kill-session -t llm_dataset
+
+  Check progress without attaching:
+
+  tail -f /home/prachit/Desktop/vlm-conformal/px4_ws/src/
+  llm_drone/generated/offline_ground_truth/batch_logs/
+  overnight_batch.log
+
+####datasset genration command
+tmux new-session -d -s llm_dataset "bash -lc '
+  source /opt/ros/humble/setup.bash
+  cd /home/prachit/Desktop/vlm-conformal/px4_ws
+  source install/setup.bash
+  mkdir -p /home/prachit/Desktop/vlm-conformal/px4_ws/src/
+  llm_drone/generated/offline_ground_truth/batch_logs
+  mkdir -p /home/prachit/Desktop/vlm-conformal/px4_ws/src/
+  llm_drone/dataset/offline_ground_truth_runs
   ros2 run llm_drone offline_dataset_batch_runner \
     --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/
   llm_drone/worlds \
-    --world-glob 'run1.sdf' \
-    --reset-merged-csv
+    --world-glob \"*.sdf\" \
+    --reset-merged-csv \
+    --continue-on-error \
+    2>&1 | tee /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs/overnight_batch.log
+  '"
 
-ros2 run llm_drone offline_dataset_batch_runner \
-    --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/
-  llm_drone/worlds \
-    --world-glob '*.sdf' \
-    --continue-on-error
+
+ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob '*.sdf' --skip-existing-csv --continue-on-error
