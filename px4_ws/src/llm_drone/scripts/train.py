@@ -49,6 +49,7 @@ import inspect
 import json
 import os
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -88,6 +89,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 log = logging.getLogger(__name__)
+DEFAULT_OUTPUT_DIR = (Path(__file__).resolve().parents[1] / "models" / "drone_planner_checkpoints").resolve()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,7 +167,7 @@ class TrainConfig:
     # validation examples — enough for stable eval loss measurement.
 
     # --- Training ---
-    output_dir: str = "./drone_planner_checkpoints"
+    output_dir: str = str(DEFAULT_OUTPUT_DIR)
 
     num_train_epochs: int = 3
     # WHY 3: For fine-tuning, 1-3 epochs is almost always correct.
@@ -679,6 +681,28 @@ def build_training_args(cfg: TrainConfig, tokenizer, train_dataset_len: int) -> 
     return training_args
 
 
+def find_latest_checkpoint(output_dir: str | os.PathLike[str]) -> Path | None:
+    """Return the highest-step checkpoint directory if one exists."""
+    root = Path(output_dir).expanduser().resolve()
+    if not root.exists():
+        return None
+
+    checkpoint_pattern = re.compile(r"^checkpoint-(\d+)$")
+    candidates: list[tuple[int, Path]] = []
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        match = checkpoint_pattern.match(child.name)
+        if match is None:
+            continue
+        candidates.append((int(match.group(1)), child))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[-1][1]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 8: EVALUATION CALLBACKS
 #
@@ -815,6 +839,8 @@ def main():
 
     # 4. Build training arguments
     training_args = build_training_args(cfg, tokenizer, len(train_dataset))
+    output_dir = Path(cfg.output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     log.info(
         "EOS alignment: tokenizer.eos_token=%r eos_id=%r training_args.eos_token=%r",
         tokenizer.eos_token,
@@ -866,8 +892,33 @@ def main():
     log.info(f"  Effective batch : {cfg.per_device_train_batch_size * cfg.gradient_accumulation_steps} per GPU")
     log.info(f"  Learning rate   : {cfg.learning_rate}")
     log.info(f"  Checkpoints at  : {cfg.output_dir}")
+    log.info(f"  TensorBoard logs: {Path(cfg.output_dir).expanduser().resolve() / 'logs'}")
 
-    trainer.train()
+    resume_checkpoint = find_latest_checkpoint(cfg.output_dir)
+    if resume_checkpoint is not None:
+        log.info(f"Resuming from latest checkpoint: {resume_checkpoint}")
+    else:
+        log.info("No prior checkpoint found. Starting fresh training run.")
+
+    training_completed = False
+    try:
+        trainer.train(
+            resume_from_checkpoint=str(resume_checkpoint) if resume_checkpoint is not None else None
+        )
+        training_completed = True
+    except KeyboardInterrupt:
+        interrupt_dir = os.path.join(cfg.output_dir, "interrupted_adapter")
+        log.warning("Training interrupted by user. Saving current adapter snapshot to: %s", interrupt_dir)
+        model.save_pretrained(interrupt_dir)
+        tokenizer.save_pretrained(interrupt_dir)
+        latest_checkpoint = find_latest_checkpoint(cfg.output_dir)
+        if latest_checkpoint is not None:
+            log.warning("Latest resumable trainer checkpoint remains at: %s", latest_checkpoint)
+        log.warning("You can restart the script and it will auto-resume from the latest checkpoint.")
+        return
+
+    if not training_completed:
+        return
 
     # 9. Save final model
     log.info("Training complete. Saving final model...")

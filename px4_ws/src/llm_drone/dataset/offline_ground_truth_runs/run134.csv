@@ -1,0 +1,697 @@
+anchor_stamp_s,scene_stamp_s,sync_dt_ms,label_mode,prompt,label_waypoints_json,wp0_x,wp0_y,wp0_z,wp1_x,wp1_y,wp1_z,wp2_x,wp2_y,wp2_z,wp3_x,wp3_y,wp3_z,wp4_x,wp4_y,wp4_z
+1773806654.895189047,1773806654.895189047,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (-0.01, -0.02, -2.49) m.
+- Current velocity is (0.00, 0.01, 0.00) m/s (speed 0.01 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (1.10, 27.65, -0.01) m with distance 27.67 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 19. Nearest depth obstacle in NED is at (0.43, 0.93, -2.53) m, relative vector (0.45, 0.95, -0.04) m, distance 1.05 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 0.75 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.07, 5.07, 5.06, 1.41, 0.75] m.
+- Nearest obstacle sector is far_right at 0.75 m and clearance status is blocked.
+- Lateral planning hint: left side is clearer.","{""waypoints"":[{""x"":0.09308998113207567,""y"":0.6143390377358494},{""x"":0.09780696226415109,""y"":1.1049050754716983},{""x"":0.10252394339622661,""y"":1.5954711132075476},{""x"":0.10724092452830203,""y"":2.0860371509433966},{""x"":0.11195790566037755,""y"":2.576603188679246}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 27.52 m to 27.03 m from goal immediately and to 25.07 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 5.00 m against manifest obstacles with 0 violating segment(s).""}",0.09308998113207567,0.6143390377358494,-2.5,0.09780696226415109,1.1049050754716983,-2.5,0.10252394339622661,1.5954711132075476,-2.5,0.10724092452830203,2.0860371509433966,-2.5,0.11195790566037755,2.576603188679246,-2.5
+1773806660.383576632,1773806660.383576632,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.05, 0.37, -2.53) m.
+- Current velocity is (0.00, 0.10, 0.01) m/s (speed 0.10 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (1.04, 27.25, 0.03) m with distance 27.27 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 4. Nearest depth obstacle in NED is at (-3.16, 9.87, -2.24) m, relative vector (-3.21, 9.49, 0.28) m, distance 10.02 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 5.10 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.10, 5.11, 5.11, 5.11, 5.12] m.
+- Nearest obstacle sector is far_left at 5.10 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.09780696226415109,""y"":1.1049050754716983},{""x"":0.10252394339622661,""y"":1.5954711132075476},{""x"":0.10724092452830203,""y"":2.0860371509433966},{""x"":0.11195790566037755,""y"":2.576603188679246},{""x"":0.11667488679245297,""y"":3.067169226415095}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 27.03 m to 26.54 m from goal immediately and to 24.58 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 5.00 m against manifest obstacles with 0 violating segment(s).""}",0.09780696226415109,1.1049050754716983,-2.5,0.10252394339622661,1.5954711132075476,-2.5,0.10724092452830203,2.0860371509433966,-2.5,0.11195790566037755,2.576603188679246,-2.5,0.11667488679245297,3.067169226415095,-2.5
+1773806666.563667774,1773806666.563667774,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.09, 0.86, -2.50) m.
+- Current velocity is (0.01, 0.07, 0.00) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (1.00, 26.76, 0.00) m with distance 26.78 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 3. Nearest depth obstacle in NED is at (-2.90, 9.89, -2.30) m, relative vector (-2.98, 9.02, 0.20) m, distance 9.51 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 4.99 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.99, 4.99, 4.99, 4.99, 4.99] m.
+- Nearest obstacle sector is far_left at 4.99 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.10252394339622661,""y"":1.5954711132075476},{""x"":0.10724092452830203,""y"":2.0860371509433966},{""x"":0.11195790566037755,""y"":2.576603188679246},{""x"":0.11667488679245297,""y"":3.067169226415095},{""x"":0.1213918679245285,""y"":3.5577352641509443}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 26.54 m to 26.05 m from goal immediately and to 24.09 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 5.01 m against manifest obstacles with 0 violating segment(s).""}",0.10252394339622661,1.5954711132075476,-2.5,0.10724092452830203,2.0860371509433966,-2.5,0.11195790566037755,2.576603188679246,-2.5,0.11667488679245297,3.067169226415095,-2.5,0.1213918679245285,3.5577352641509443,-2.5
+1773806672.642154694,1773806672.642154694,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.10, 1.35, -2.48) m.
+- Current velocity is (0.00, 0.08, 0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.98, 26.27, -0.02) m with distance 26.29 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 8. Nearest depth obstacle in NED is at (-3.01, 9.82, -1.84) m, relative vector (-3.12, 8.47, 0.64) m, distance 9.05 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 4.99 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.00, 5.00, 4.99, 4.99, 4.99] m.
+- Nearest obstacle sector is far_right at 4.99 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.10724092452830203,""y"":2.0860371509433966},{""x"":0.11195790566037755,""y"":2.576603188679246},{""x"":0.11667488679245297,""y"":3.067169226415095},{""x"":0.1213918679245285,""y"":3.5577352641509443},{""x"":0.1261088490566039,""y"":4.048301301886793}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 26.05 m to 25.56 m from goal immediately and to 23.60 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 5.01 m against manifest obstacles with 0 violating segment(s).""}",0.10724092452830203,2.0860371509433966,-2.5,0.11195790566037755,2.576603188679246,-2.5,0.11667488679245297,3.067169226415095,-2.5,0.1213918679245285,3.5577352641509443,-2.5,0.1261088490566039,4.048301301886793,-2.5
+1773806678.284684420,1773806678.284684420,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.10, 1.84, -2.51) m.
+- Current velocity is (0.00, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.99, 25.78, 0.01) m with distance 25.80 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 16. Nearest depth obstacle in NED is at (-2.67, 9.95, -2.21) m, relative vector (-2.77, 8.11, 0.29) m, distance 8.58 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 5.02 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.03, 5.03, 5.03, 5.03, 5.02] m.
+- Nearest obstacle sector is far_right at 5.02 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.11195790566037755,""y"":2.576603188679246},{""x"":0.11667488679245297,""y"":3.067169226415095},{""x"":0.1213918679245285,""y"":3.5577352641509443},{""x"":0.1261088490566039,""y"":4.048301301886793},{""x"":0.13082583018867944,""y"":4.538867339622642}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 25.56 m to 25.07 m from goal immediately and to 23.10 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 5.02 m against manifest obstacles with 0 violating segment(s).""}",0.11195790566037755,2.576603188679246,-2.5,0.11667488679245297,3.067169226415095,-2.5,0.1213918679245285,3.5577352641509443,-2.5,0.1261088490566039,4.048301301886793,-2.5,0.13082583018867944,4.538867339622642,-2.5
+1773806684.848319769,1773806684.848319769,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.13, 2.34, -2.47) m.
+- Current velocity is (-0.01, 0.09, -0.00) m/s (speed 0.09 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.96, 25.28, -0.03) m with distance 25.30 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 15. Nearest depth obstacle in NED is at (-2.62, 9.94, -2.32) m, relative vector (-2.75, 7.60, 0.15) m, distance 8.08 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 4.97 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.97, 4.97, 4.97, 4.97, 4.97] m.
+- Nearest obstacle sector is far_right at 4.97 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.11667488679245297,""y"":3.067169226415095},{""x"":0.1213918679245285,""y"":3.5577352641509443},{""x"":0.1261088490566039,""y"":4.048301301886793},{""x"":0.13082583018867944,""y"":4.538867339622642},{""x"":0.13554281132075485,""y"":5.029433377358492}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 25.07 m to 24.58 m from goal immediately and to 22.61 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 4.96 m against manifest obstacles with 0 violating segment(s).""}",0.11667488679245297,3.067169226415095,-2.5,0.1213918679245285,3.5577352641509443,-2.5,0.1261088490566039,4.048301301886793,-2.5,0.13082583018867944,4.538867339622642,-2.5,0.13554281132075485,5.029433377358492,-2.5
+1773806691.776551485,1773806691.776551485,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.11, 2.83, -2.49) m.
+- Current velocity is (0.01, 0.07, 0.00) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.98, 24.80, -0.01) m with distance 24.82 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 13. Nearest depth obstacle in NED is at (-2.72, 9.85, -2.62) m, relative vector (-2.83, 7.02, -0.13) m, distance 7.57 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 5.02 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.04, 5.04, 5.03, 5.03, 5.02] m.
+- Nearest obstacle sector is far_right at 5.02 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.1213918679245285,""y"":3.5577352641509443},{""x"":0.1261088490566039,""y"":4.048301301886793},{""x"":0.13082583018867944,""y"":4.538867339622642},{""x"":0.13554281132075485,""y"":5.029433377358492},{""x"":0.14025979245283038,""y"":5.5199994150943406}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 24.58 m to 24.09 m from goal immediately and to 22.12 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 4.55 m against manifest obstacles with 0 violating segment(s).""}",0.1213918679245285,3.5577352641509443,-2.5,0.1261088490566039,4.048301301886793,-2.5,0.13082583018867944,4.538867339622642,-2.5,0.13554281132075485,5.029433377358492,-2.5,0.14025979245283038,5.5199994150943406,-2.5
+1773806697.562846422,1773806697.562846422,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.07, 3.32, -2.51) m.
+- Current velocity is (0.00, 0.08, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (1.02, 24.31, 0.01) m with distance 24.33 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 12. Nearest depth obstacle in NED is at (-2.53, 9.97, -2.58) m, relative vector (-2.60, 6.65, -0.07) m, distance 7.14 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 5.03 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.03, 5.03, 5.04, 5.05, 5.06] m.
+- Nearest obstacle sector is far_left at 5.03 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.1261088490566039,""y"":4.048301301886793},{""x"":0.13082583018867944,""y"":4.538867339622642},{""x"":0.13554281132075485,""y"":5.029433377358492},{""x"":0.14025979245283038,""y"":5.5199994150943406},{""x"":0.1449767735849058,""y"":6.01056545283019}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 24.09 m to 23.60 m from goal immediately and to 21.63 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 4.15 m against manifest obstacles with 0 violating segment(s).""}",0.1261088490566039,4.048301301886793,-2.5,0.13082583018867944,4.538867339622642,-2.5,0.13554281132075485,5.029433377358492,-2.5,0.14025979245283038,5.5199994150943406,-2.5,0.1449767735849058,6.01056545283019,-2.5
+1773806703.085604668,1773806703.085604668,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.10, 3.80, -2.51) m.
+- Current velocity is (0.01, 0.08, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.98, 23.82, 0.01) m with distance 23.84 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 20. Nearest depth obstacle in NED is at (-2.48, 9.90, -2.59) m, relative vector (-2.59, 6.09, -0.08) m, distance 6.62 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 5.07 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.08, 5.07, 5.07, 5.07, 5.07] m.
+- Nearest obstacle sector is far_right at 5.07 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.13082583018867944,""y"":4.538867339622642},{""x"":0.13554281132075485,""y"":5.029433377358492},{""x"":0.14025979245283038,""y"":5.5199994150943406},{""x"":0.1449767735849058,""y"":6.01056545283019},{""x"":0.14969375471698132,""y"":6.5011314905660385}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 23.60 m to 23.10 m from goal immediately and to 21.14 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 3.78 m against manifest obstacles with 0 violating segment(s).""}",0.13082583018867944,4.538867339622642,-2.5,0.13554281132075485,5.029433377358492,-2.5,0.14025979245283038,5.5199994150943406,-2.5,0.1449767735849058,6.01056545283019,-2.5,0.14969375471698132,6.5011314905660385,-2.5
+1773806709.736044884,1773806709.736044884,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.17, 4.29, -2.48) m.
+- Current velocity is (0.00, 0.06, -0.00) m/s (speed 0.06 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.92, 23.33, -0.02) m with distance 23.35 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 17. Nearest depth obstacle in NED is at (-2.21, 9.98, -1.96) m, relative vector (-2.38, 5.69, 0.53) m, distance 6.19 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 5.01 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.04, 5.03, 5.03, 5.02, 5.01] m.
+- Nearest obstacle sector is far_right at 5.01 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.13554281132075485,""y"":5.029433377358492},{""x"":0.14025979245283038,""y"":5.5199994150943406},{""x"":0.1449767735849058,""y"":6.01056545283019},{""x"":0.14969375471698132,""y"":6.5011314905660385},{""x"":0.15441073584905673,""y"":6.991697528301888}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 23.10 m to 22.61 m from goal immediately and to 20.65 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 3.42 m against manifest obstacles with 0 violating segment(s).""}",0.13554281132075485,5.029433377358492,-2.5,0.14025979245283038,5.5199994150943406,-2.5,0.1449767735849058,6.01056545283019,-2.5,0.14969375471698132,6.5011314905660385,-2.5,0.15441073584905673,6.991697528301888,-2.5
+1773806717.125873327,1773806717.125873327,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.13, 4.79, -2.50) m.
+- Current velocity is (-0.00, 0.08, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.96, 22.84, 0.00) m with distance 22.86 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 28. Nearest depth obstacle in NED is at (-2.29, 9.95, -2.74) m, relative vector (-2.41, 5.16, -0.23) m, distance 5.71 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 4.98 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.98, 4.98, 4.99, 4.99, 5.00] m.
+- Nearest obstacle sector is far_left at 4.98 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.14025979245283038,""y"":5.5199994150943406},{""x"":0.1449767735849058,""y"":6.01056545283019},{""x"":0.14969375471698132,""y"":6.5011314905660385},{""x"":0.15441073584905673,""y"":6.991697528301888},{""x"":0.15912771698113226,""y"":7.482263566037736}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 22.61 m to 22.12 m from goal immediately and to 20.16 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 3.10 m against manifest obstacles with 0 violating segment(s).""}",0.14025979245283038,5.5199994150943406,-2.5,0.1449767735849058,6.01056545283019,-2.5,0.14969375471698132,6.5011314905660385,-2.5,0.15441073584905673,6.991697528301888,-2.5,0.15912771698113226,7.482263566037736,-2.5
+1773806723.433274508,1773806723.433274508,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.18, 5.27, -2.48) m.
+- Current velocity is (0.00, 0.08, 0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.91, 22.35, -0.02) m with distance 22.37 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 30. Nearest depth obstacle in NED is at (-2.12, 9.96, -2.58) m, relative vector (-2.30, 4.68, -0.10) m, distance 5.22 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 4.66 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.66, 4.67, 4.99, 4.98, 4.97] m.
+- Nearest obstacle sector is far_left at 4.66 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.1449767735849058,""y"":6.01056545283019},{""x"":0.14969375471698132,""y"":6.5011314905660385},{""x"":0.15441073584905673,""y"":6.991697528301888},{""x"":0.15912771698113226,""y"":7.482263566037736},{""x"":0.16384469811320768,""y"":7.972829603773586}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 22.12 m to 21.63 m from goal immediately and to 19.67 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.82 m against manifest obstacles with 0 violating segment(s).""}",0.1449767735849058,6.01056545283019,-2.5,0.14969375471698132,6.5011314905660385,-2.5,0.15441073584905673,6.991697528301888,-2.5,0.15912771698113226,7.482263566037736,-2.5,0.16384469811320768,7.972829603773586,-2.5
+1773806728.482080221,1773806728.482080221,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.12, 5.77, -2.48) m.
+- Current velocity is (-0.01, 0.09, -0.00) m/s (speed 0.09 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.97, 21.86, -0.02) m with distance 21.88 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 34. Nearest depth obstacle in NED is at (-2.26, 9.94, -2.40) m, relative vector (-2.37, 4.18, 0.09) m, distance 4.81 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 4.20 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.20, 4.28, 5.01, 5.02, 5.03] m.
+- Nearest obstacle sector is far_left at 4.20 m and clearance status is clear.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.14969375471698132,""y"":6.5011314905660385},{""x"":0.15441073584905673,""y"":6.991697528301888},{""x"":0.15912771698113226,""y"":7.482263566037736},{""x"":0.16384469811320768,""y"":7.972829603773586},{""x"":0.1685616792452832,""y"":8.463395641509434}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 21.63 m to 21.14 m from goal immediately and to 19.18 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.60 m against manifest obstacles with 0 violating segment(s).""}",0.14969375471698132,6.5011314905660385,-2.5,0.15441073584905673,6.991697528301888,-2.5,0.15912771698113226,7.482263566037736,-2.5,0.16384469811320768,7.972829603773586,-2.5,0.1685616792452832,8.463395641509434,-2.5
+1773806736.599245071,1773806736.599245071,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.17, 6.26, -2.49) m.
+- Current velocity is (-0.01, 0.05, 0.00) m/s (speed 0.05 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.92, 21.37, -0.01) m with distance 21.39 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 44. Nearest depth obstacle in NED is at (-2.05, 10.02, -2.30) m, relative vector (-2.21, 3.76, 0.19) m, distance 4.37 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 3.74 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [3.74, 3.91, 5.03, 5.03, 5.03] m.
+- Nearest obstacle sector is far_left at 3.74 m and clearance status is clear.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.15441073584905673,""y"":6.991697528301888},{""x"":0.15912771698113226,""y"":7.482263566037736},{""x"":0.16384469811320768,""y"":7.972829603773586},{""x"":0.1685616792452832,""y"":8.463395641509434},{""x"":0.17327866037735862,""y"":8.953961679245282}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 21.14 m to 20.65 m from goal immediately and to 18.69 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.43 m against manifest obstacles with 0 violating segment(s).""}",0.15441073584905673,6.991697528301888,-2.5,0.15912771698113226,7.482263566037736,-2.5,0.16384469811320768,7.972829603773586,-2.5,0.1685616792452832,8.463395641509434,-2.5,0.17327866037735862,8.953961679245282,-2.5
+1773806743.581249475,1773806743.581249475,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.14, 6.75, -2.51) m.
+- Current velocity is (-0.01, 0.06, 0.01) m/s (speed 0.06 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.95, 20.87, 0.01) m with distance 20.90 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 39. Nearest depth obstacle in NED is at (-2.10, 9.95, -2.56) m, relative vector (-2.23, 3.20, -0.05) m, distance 3.90 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 3.19 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [3.19, 3.65, 5.02, 5.02, 5.03] m.
+- Nearest obstacle sector is far_left at 3.19 m and clearance status is clear.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.15912771698113226,""y"":7.482263566037736},{""x"":0.16384469811320768,""y"":7.972829603773586},{""x"":0.1685616792452832,""y"":8.463395641509434},{""x"":0.17327866037735862,""y"":8.953961679245282},{""x"":0.17799564150943414,""y"":9.444527716981131}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 20.65 m to 20.16 m from goal immediately and to 18.20 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.34 m against manifest obstacles with 0 violating segment(s).""}",0.15912771698113226,7.482263566037736,-2.5,0.16384469811320768,7.972829603773586,-2.5,0.1685616792452832,8.463395641509434,-2.5,0.17327866037735862,8.953961679245282,-2.5,0.17799564150943414,9.444527716981131,-2.5
+1773806750.042083502,1773806750.042083502,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.15, 7.24, -2.51) m.
+- Current velocity is (-0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.94, 20.38, 0.01) m with distance 20.40 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 29. Nearest depth obstacle in NED is at (-1.92, 10.07, -2.64) m, relative vector (-2.07, 2.83, -0.13) m, distance 3.51 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 2.76 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [2.76, 5.06, 5.07, 5.07, 5.08] m.
+- Nearest obstacle sector is far_left at 2.76 m and clearance status is caution.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.16384469811320768,""y"":7.972829603773586},{""x"":0.1685616792452832,""y"":8.463395641509434},{""x"":0.17327866037735862,""y"":8.953961679245282},{""x"":0.17799564150943414,""y"":9.444527716981131},{""x"":0.18271262264150956,""y"":9.935093754716982}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 20.16 m to 19.67 m from goal immediately and to 17.71 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.32 m against manifest obstacles with 0 violating segment(s).""}",0.16384469811320768,7.972829603773586,-2.5,0.1685616792452832,8.463395641509434,-2.5,0.17327866037735862,8.953961679245282,-2.5,0.17799564150943414,9.444527716981131,-2.5,0.18271262264150956,9.935093754716982,-2.5
+1773806756.396923542,1773806756.396923542,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.13, 7.73, -2.50) m.
+- Current velocity is (-0.01, 0.08, 0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.96, 19.89, -0.00) m with distance 19.92 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 47. Nearest depth obstacle in NED is at (-1.80, 10.12, -2.43) m, relative vector (-1.93, 2.39, 0.07) m, distance 3.07 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 2.38 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [2.38, 4.98, 4.99, 5.00, 5.01] m.
+- Nearest obstacle sector is far_left at 2.38 m and clearance status is caution.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.1685616792452832,""y"":8.463395641509434},{""x"":0.17327866037735862,""y"":8.953961679245282},{""x"":0.17799564150943414,""y"":9.444527716981131},{""x"":0.18271262264150956,""y"":9.935093754716982},{""x"":0.18742960377358509,""y"":10.42565979245283}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 19.67 m to 19.18 m from goal immediately and to 17.22 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.32 m against manifest obstacles with 0 violating segment(s).""}",0.1685616792452832,8.463395641509434,-2.5,0.17327866037735862,8.953961679245282,-2.5,0.17799564150943414,9.444527716981131,-2.5,0.18271262264150956,9.935093754716982,-2.5,0.18742960377358509,10.42565979245283,-2.5
+1773806761.530325413,1773806761.530325413,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.15, 8.22, -2.48) m.
+- Current velocity is (0.00, 0.08, -0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.94, 19.40, -0.02) m with distance 19.43 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 36. Nearest depth obstacle in NED is at (-1.59, 10.39, -2.64) m, relative vector (-1.74, 2.17, -0.16) m, distance 2.79 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 2.14 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [2.14, 4.78, 4.96, 4.97, 4.77] m.
+- Nearest obstacle sector is far_left at 2.14 m and clearance status is caution.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.17327866037735862,""y"":8.953961679245282},{""x"":0.17799564150943414,""y"":9.444527716981131},{""x"":0.18271262264150956,""y"":9.935093754716982},{""x"":0.18742960377358509,""y"":10.42565979245283},{""x"":0.1921465849056605,""y"":10.91622583018868}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 19.18 m to 18.69 m from goal immediately and to 16.73 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.22 m against manifest obstacles with 0 violating segment(s).""}",0.17327866037735862,8.953961679245282,-2.5,0.17799564150943414,9.444527716981131,-2.5,0.18271262264150956,9.935093754716982,-2.5,0.18742960377358509,10.42565979245283,-2.5,0.1921465849056605,10.91622583018868,-2.5
+1773806767.258797884,1773806767.258797884,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.18, 8.71, -2.47) m.
+- Current velocity is (-0.00, 0.06, 0.00) m/s (speed 0.06 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.91, 18.91, -0.03) m with distance 18.94 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 37. Nearest depth obstacle in NED is at (-1.33, 13.06, -2.45) m, relative vector (-1.51, 4.35, 0.02) m, distance 4.60 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 4.29 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.95, 4.29, 4.95, 4.95, 4.29] m.
+- Nearest obstacle sector is far_right at 4.29 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.17799564150943414,""y"":9.444527716981131},{""x"":0.18271262264150956,""y"":9.935093754716982},{""x"":0.18742960377358509,""y"":10.42565979245283},{""x"":0.1921465849056605,""y"":10.91622583018868},{""x"":0.19686356603773603,""y"":11.406791867924529}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 18.69 m to 18.20 m from goal immediately and to 16.24 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.92 m against manifest obstacles with 0 violating segment(s).""}",0.17799564150943414,9.444527716981131,-2.5,0.18271262264150956,9.935093754716982,-2.5,0.18742960377358509,10.42565979245283,-2.5,0.1921465849056605,10.91622583018868,-2.5,0.19686356603773603,11.406791867924529,-2.5
+1773806773.030711889,1773806773.030711889,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.16, 9.20, -2.48) m.
+- Current velocity is (0.00, 0.09, -0.00) m/s (speed 0.09 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.93, 18.42, -0.02) m with distance 18.45 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 27. Nearest depth obstacle in NED is at (-1.21, 13.12, -2.67) m, relative vector (-1.38, 3.92, -0.20) m, distance 4.16 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 3.82 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.01, 3.82, 5.01, 5.01, 3.88] m.
+- Nearest obstacle sector is left at 3.82 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.18271262264150956,""y"":9.935093754716982},{""x"":0.18742960377358509,""y"":10.42565979245283},{""x"":0.1921465849056605,""y"":10.91622583018868},{""x"":0.19686356603773603,""y"":11.406791867924529},{""x"":0.20158054716981144,""y"":11.897357905660378}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 18.20 m to 17.71 m from goal immediately and to 15.75 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.70 m against manifest obstacles with 0 violating segment(s).""}",0.18271262264150956,9.935093754716982,-2.5,0.18742960377358509,10.42565979245283,-2.5,0.1921465849056605,10.91622583018868,-2.5,0.19686356603773603,11.406791867924529,-2.5,0.20158054716981144,11.897357905660378,-2.5
+1773806778.722288132,1773806778.722288132,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.18, 9.69, -2.51) m.
+- Current velocity is (-0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.91, 17.93, 0.01) m with distance 17.95 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 31. Nearest depth obstacle in NED is at (-1.22, 13.07, -2.51) m, relative vector (-1.40, 3.38, -0.00) m, distance 3.66 m.
+- Depth validity fraction is 0.57. Global nearest obstacle distance is 3.31 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [3.35, 3.31, 5.07, 5.07, 3.60] m.
+- Nearest obstacle sector is left at 3.31 m and clearance status is clear.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.18742960377358509,""y"":10.42565979245283},{""x"":0.1921465849056605,""y"":10.91622583018868},{""x"":0.19686356603773603,""y"":11.406791867924529},{""x"":0.20158054716981144,""y"":11.897357905660378},{""x"":0.20629752830188697,""y"":12.387923943396226}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 17.71 m to 17.22 m from goal immediately and to 15.26 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.56 m against manifest obstacles with 0 violating segment(s).""}",0.18742960377358509,10.42565979245283,-2.5,0.1921465849056605,10.91622583018868,-2.5,0.19686356603773603,11.406791867924529,-2.5,0.20158054716981144,11.897357905660378,-2.5,0.20629752830188697,12.387923943396226,-2.5
+1773806784.158700466,1773806784.158700466,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.20, 10.19, -2.49) m.
+- Current velocity is (-0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.89, 17.44, -0.01) m with distance 17.46 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 40. Nearest depth obstacle in NED is at (-1.21, 13.06, -2.57) m, relative vector (-1.41, 2.88, -0.08) m, distance 3.20 m.
+- Depth validity fraction is 0.57. Global nearest obstacle distance is 2.82 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [2.82, 2.83, 5.04, 5.04, 3.58] m.
+- Nearest obstacle sector is far_left at 2.82 m and clearance status is caution.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.1921465849056605,""y"":10.91622583018868},{""x"":0.19686356603773603,""y"":11.406791867924529},{""x"":0.20158054716981144,""y"":11.897357905660378},{""x"":0.20629752830188697,""y"":12.387923943396226},{""x"":0.21101450943396238,""y"":12.878489981132075}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 17.22 m to 16.73 m from goal immediately and to 14.77 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.53 m against manifest obstacles with 0 violating segment(s).""}",0.1921465849056605,10.91622583018868,-2.5,0.19686356603773603,11.406791867924529,-2.5,0.20158054716981144,11.897357905660378,-2.5,0.20629752830188697,12.387923943396226,-2.5,0.21101450943396238,12.878489981132075,-2.5
+1773806789.526349068,1773806789.526349068,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.17, 10.67, -2.50) m.
+- Current velocity is (0.00, 0.08, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.92, 16.95, 0.00) m with distance 16.98 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 55. Nearest depth obstacle in NED is at (-1.15, 13.10, -2.50) m, relative vector (-1.32, 2.43, -0.00) m, distance 2.77 m.
+- Depth validity fraction is 0.57. Global nearest obstacle distance is 2.34 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [2.34, 2.42, 5.04, 5.04, 5.04] m.
+- Nearest obstacle sector is far_left at 2.34 m and clearance status is caution.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.19686356603773603,""y"":11.406791867924529},{""x"":0.20158054716981144,""y"":11.897357905660378},{""x"":0.20629752830188697,""y"":12.387923943396226},{""x"":0.21101450943396238,""y"":12.878489981132075},{""x"":0.2157314905660379,""y"":13.369056018867925}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 16.73 m to 16.24 m from goal immediately and to 14.28 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.53 m against manifest obstacles with 0 violating segment(s).""}",0.19686356603773603,11.406791867924529,-2.5,0.20158054716981144,11.897357905660378,-2.5,0.20629752830188697,12.387923943396226,-2.5,0.21101450943396238,12.878489981132075,-2.5,0.2157314905660379,13.369056018867925,-2.5
+1773806794.837725639,1773806794.837725639,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.17, 11.16, -2.48) m.
+- Current velocity is (0.01, 0.08, 0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.91, 16.46, -0.02) m with distance 16.48 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 71. Nearest depth obstacle in NED is at (-1.03, 13.14, -2.58) m, relative vector (-1.20, 1.98, -0.10) m, distance 2.32 m.
+- Depth validity fraction is 0.57. Global nearest obstacle distance is 1.85 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [1.85, 2.05, 5.09, 5.09, 5.08] m.
+- Nearest obstacle sector is far_left at 1.85 m and clearance status is caution.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.20158054716981144,""y"":11.897357905660378},{""x"":0.20629752830188697,""y"":12.387923943396226},{""x"":0.21101450943396238,""y"":12.878489981132075},{""x"":0.2157314905660379,""y"":13.369056018867925},{""x"":0.22044847169811332,""y"":13.859622056603774}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 16.24 m to 15.75 m from goal immediately and to 13.79 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.53 m against manifest obstacles with 0 violating segment(s).""}",0.20158054716981144,11.897357905660378,-2.5,0.20629752830188697,12.387923943396226,-2.5,0.21101450943396238,12.878489981132075,-2.5,0.2157314905660379,13.369056018867925,-2.5,0.22044847169811332,13.859622056603774,-2.5
+1773806800.231351852,1773806800.231351852,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.20, 11.65, -2.49) m.
+- Current velocity is (-0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.89, 15.97, -0.01) m with distance 15.99 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 75. Nearest depth obstacle in NED is at (-0.96, 13.15, -2.44) m, relative vector (-1.16, 1.50, 0.05) m, distance 1.89 m.
+- Depth validity fraction is 0.57. Global nearest obstacle distance is 1.43 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [1.43, 1.81, 5.08, 5.08, 5.07] m.
+- Nearest obstacle sector is far_left at 1.43 m and clearance status is blocked.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.20629752830188697,""y"":12.387923943396226},{""x"":0.21101450943396238,""y"":12.878489981132075},{""x"":0.2157314905660379,""y"":13.369056018867925},{""x"":0.22044847169811332,""y"":13.859622056603774},{""x"":0.22516545283018885,""y"":14.350188094339622}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 15.75 m to 15.26 m from goal immediately and to 13.30 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.53 m against manifest obstacles with 0 violating segment(s).""}",0.20629752830188697,12.387923943396226,-2.5,0.21101450943396238,12.878489981132075,-2.5,0.2157314905660379,13.369056018867925,-2.5,0.22044847169811332,13.859622056603774,-2.5,0.22516545283018885,14.350188094339622,-2.5
+1773806805.653430223,1773806805.653430223,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.17, 12.14, -2.51) m.
+- Current velocity is (0.01, 0.08, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.92, 15.48, 0.01) m with distance 15.51 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 56. Nearest depth obstacle in NED is at (-0.72, 13.35, -2.57) m, relative vector (-0.89, 1.21, -0.06) m, distance 1.50 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 1.11 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [1.11, 5.08, 5.08, 5.08, 5.09] m.
+- Nearest obstacle sector is far_left at 1.11 m and clearance status is blocked.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.21101450943396238,""y"":12.878489981132075},{""x"":0.2157314905660379,""y"":13.369056018867925},{""x"":0.22044847169811332,""y"":13.859622056603774},{""x"":0.22516545283018885,""y"":14.350188094339622},{""x"":0.22988243396226427,""y"":14.840754132075471}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 15.26 m to 14.77 m from goal immediately and to 12.81 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.53 m against manifest obstacles with 0 violating segment(s).""}",0.21101450943396238,12.878489981132075,-2.5,0.2157314905660379,13.369056018867925,-2.5,0.22044847169811332,13.859622056603774,-2.5,0.22516545283018885,14.350188094339622,-2.5,0.22988243396226427,14.840754132075471,-2.5
+1773806811.582700253,1773806811.582700253,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.23, 12.64, -2.48) m.
+- Current velocity is (-0.01, 0.06, 0.01) m/s (speed 0.06 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.86, 14.99, -0.02) m with distance 15.01 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 18. Nearest depth obstacle in NED is at (-0.61, 13.76, -2.41) m, relative vector (-0.84, 1.12, 0.07) m, distance 1.40 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 1.02 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [1.02, 5.09, 5.09, 5.09, 5.09] m.
+- Nearest obstacle sector is far_left at 1.02 m and clearance status is blocked.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.2157314905660379,""y"":13.369056018867925},{""x"":0.22044847169811332,""y"":13.859622056603774},{""x"":0.22516545283018885,""y"":14.350188094339622},{""x"":0.22988243396226427,""y"":14.840754132075471},{""x"":0.2345994150943398,""y"":15.33132016981132}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 14.77 m to 14.28 m from goal immediately and to 12.32 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.53 m against manifest obstacles with 0 violating segment(s).""}",0.2157314905660379,13.369056018867925,-2.5,0.22044847169811332,13.859622056603774,-2.5,0.22516545283018885,14.350188094339622,-2.5,0.22988243396226427,14.840754132075471,-2.5,0.2345994150943398,15.33132016981132,-2.5
+1773806817.774278879,1773806817.774278879,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.21, 13.13, -2.49) m.
+- Current velocity is (0.00, 0.07, 0.00) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.88, 14.49, -0.01) m with distance 14.52 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 12. Nearest depth obstacle in NED is at (-2.39, 19.12, -2.20) m, relative vector (-2.59, 5.99, 0.30) m, distance 6.53 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 5.03 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.03, 5.03, 5.03, 5.04, 5.04] m.
+- Nearest obstacle sector is far_left at 5.03 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.22044847169811332,""y"":13.859622056603774},{""x"":0.22516545283018885,""y"":14.350188094339622},{""x"":0.22988243396226427,""y"":14.840754132075471},{""x"":0.2345994150943398,""y"":15.33132016981132},{""x"":0.2393163962264152,""y"":15.82188620754717}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 14.28 m to 13.79 m from goal immediately and to 11.83 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.62 m against manifest obstacles with 0 violating segment(s).""}",0.22044847169811332,13.859622056603774,-2.5,0.22516545283018885,14.350188094339622,-2.5,0.22988243396226427,14.840754132075471,-2.5,0.2345994150943398,15.33132016981132,-2.5,0.2393163962264152,15.82188620754717,-2.5
+1773806823.998958588,1773806823.998958588,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.20, 13.61, -2.51) m.
+- Current velocity is (-0.01, 0.08, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.89, 14.01, 0.01) m with distance 14.04 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 13. Nearest depth obstacle in NED is at (-2.54, 19.06, -2.79) m, relative vector (-2.74, 5.44, -0.28) m, distance 6.10 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 5.14 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.14, 5.15, 5.15, 5.16, 5.16] m.
+- Nearest obstacle sector is far_left at 5.14 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.22516545283018885,""y"":14.350188094339622},{""x"":0.22988243396226427,""y"":14.840754132075471},{""x"":0.2345994150943398,""y"":15.33132016981132},{""x"":0.2393163962264152,""y"":15.82188620754717},{""x"":0.24403337735849073,""y"":16.31245224528302}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 13.79 m to 13.30 m from goal immediately and to 11.34 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.81 m against manifest obstacles with 0 violating segment(s).""}",0.22516545283018885,14.350188094339622,-2.5,0.22988243396226427,14.840754132075471,-2.5,0.2345994150943398,15.33132016981132,-2.5,0.2393163962264152,15.82188620754717,-2.5,0.24403337735849073,16.31245224528302,-2.5
+1773806829.584270239,1773806829.584270239,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.17, 14.11, -2.50) m.
+- Current velocity is (0.00, 0.08, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.92, 13.52, 0.00) m with distance 13.55 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 8. Nearest depth obstacle in NED is at (-2.32, 19.19, -2.32) m, relative vector (-2.49, 5.08, 0.18) m, distance 5.66 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 4.97 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.97, 5.04, 5.13, 5.14, 5.15] m.
+- Nearest obstacle sector is far_left at 4.97 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.22988243396226427,""y"":14.840754132075471},{""x"":0.2345994150943398,""y"":15.33132016981132},{""x"":0.2393163962264152,""y"":15.82188620754717},{""x"":0.24403337735849073,""y"":16.31245224528302},{""x"":0.24875035849056615,""y"":16.80301828301887}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 13.30 m to 12.81 m from goal immediately and to 10.85 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.07 m against manifest obstacles with 0 violating segment(s).""}",0.22988243396226427,14.840754132075471,-2.5,0.2345994150943398,15.33132016981132,-2.5,0.2393163962264152,15.82188620754717,-2.5,0.24403337735849073,16.31245224528302,-2.5,0.24875035849056615,16.80301828301887,-2.5
+1773806836.218737364,1773806836.218737364,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.22, 14.60, -2.52) m.
+- Current velocity is (0.00, 0.05, 0.01) m/s (speed 0.05 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.87, 13.03, 0.02) m with distance 13.06 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 19. Nearest depth obstacle in NED is at (-2.26, 19.15, -2.66) m, relative vector (-2.48, 4.55, -0.14) m, distance 5.18 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 4.48 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.48, 4.65, 5.06, 5.06, 5.06] m.
+- Nearest obstacle sector is far_left at 4.48 m and clearance status is clear.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.2345994150943398,""y"":15.33132016981132},{""x"":0.2393163962264152,""y"":15.82188620754717},{""x"":0.24403337735849073,""y"":16.31245224528302},{""x"":0.24875035849056615,""y"":16.80301828301887},{""x"":0.2534673396226417,""y"":17.293584320754714}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 12.81 m to 12.32 m from goal immediately and to 10.36 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.40 m against manifest obstacles with 0 violating segment(s).""}",0.2345994150943398,15.33132016981132,-2.5,0.2393163962264152,15.82188620754717,-2.5,0.24403337735849073,16.31245224528302,-2.5,0.24875035849056615,16.80301828301887,-2.5,0.2534673396226417,17.293584320754714,-2.5
+1773806842.320615292,1773806842.320615292,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.23, 15.09, -2.50) m.
+- Current velocity is (0.01, 0.07, 0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.86, 12.54, -0.00) m with distance 12.56 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 26. Nearest depth obstacle in NED is at (-2.22, 19.15, -2.54) m, relative vector (-2.45, 4.06, -0.04) m, distance 4.74 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 3.99 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [3.99, 4.35, 5.00, 4.99, 4.99] m.
+- Nearest obstacle sector is far_left at 3.99 m and clearance status is clear.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.2393163962264152,""y"":15.82188620754717},{""x"":0.24403337735849073,""y"":16.31245224528302},{""x"":0.24875035849056615,""y"":16.80301828301887},{""x"":0.2534673396226417,""y"":17.293584320754714},{""x"":0.2581843207547171,""y"":17.784150358490564}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 12.32 m to 11.83 m from goal immediately and to 9.87 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.77 m against manifest obstacles with 0 violating segment(s).""}",0.2393163962264152,15.82188620754717,-2.5,0.24403337735849073,16.31245224528302,-2.5,0.24875035849056615,16.80301828301887,-2.5,0.2534673396226417,17.293584320754714,-2.5,0.2581843207547171,17.784150358490564,-2.5
+1773806847.424424648,1773806847.424424648,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.22, 15.58, -2.48) m.
+- Current velocity is (0.01, 0.09, -0.00) m/s (speed 0.10 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.87, 12.05, -0.02) m with distance 12.08 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 24. Nearest depth obstacle in NED is at (-2.27, 19.13, -2.42) m, relative vector (-2.49, 3.56, 0.06) m, distance 4.34 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 3.52 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [3.52, 5.00, 5.00, 5.00, 4.99] m.
+- Nearest obstacle sector is far_left at 3.52 m and clearance status is clear.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.24403337735849073,""y"":16.31245224528302},{""x"":0.24875035849056615,""y"":16.80301828301887},{""x"":0.2534673396226417,""y"":17.293584320754714},{""x"":0.2581843207547171,""y"":17.784150358490564},{""x"":0.2629013018867926,""y"":18.274716396226413}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 11.83 m to 11.34 m from goal immediately and to 9.39 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.71 m against manifest obstacles with 0 violating segment(s).""}",0.24403337735849073,16.31245224528302,-2.5,0.24875035849056615,16.80301828301887,-2.5,0.2534673396226417,17.293584320754714,-2.5,0.2581843207547171,17.784150358490564,-2.5,0.2629013018867926,18.274716396226413,-2.5
+1773806853.400630474,1773806853.400630474,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.22, 16.07, -2.49) m.
+- Current velocity is (-0.00, 0.09, 0.00) m/s (speed 0.09 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.87, 11.56, -0.01) m with distance 11.59 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 27. Nearest depth obstacle in NED is at (-2.12, 19.20, -2.49) m, relative vector (-2.34, 3.13, -0.00) m, distance 3.91 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 3.07 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [3.07, 5.05, 5.05, 5.06, 5.06] m.
+- Nearest obstacle sector is far_left at 3.07 m and clearance status is clear.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.24875035849056615,""y"":16.80301828301887},{""x"":0.2534673396226417,""y"":17.293584320754714},{""x"":0.2581843207547171,""y"":17.784150358490564},{""x"":0.2629013018867926,""y"":18.274716396226413},{""x"":0.26761828301886803,""y"":18.765282433962263}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 11.34 m to 10.85 m from goal immediately and to 8.90 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.66 m against manifest obstacles with 0 violating segment(s).""}",0.24875035849056615,16.80301828301887,-2.5,0.2534673396226417,17.293584320754714,-2.5,0.2581843207547171,17.784150358490564,-2.5,0.2629013018867926,18.274716396226413,-2.5,0.26761828301886803,18.765282433962263,-2.5
+1773806858.849761486,1773806858.849761486,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.25, 16.56, -2.49) m.
+- Current velocity is (-0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.84, 11.06, -0.01) m with distance 11.09 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 22. Nearest depth obstacle in NED is at (-1.91, 19.31, -2.72) m, relative vector (-2.16, 2.75, -0.23) m, distance 3.50 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 2.71 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [2.71, 5.03, 5.04, 5.04, 5.04] m.
+- Nearest obstacle sector is far_left at 2.71 m and clearance status is caution.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.2534673396226417,""y"":17.293584320754714},{""x"":0.2581843207547171,""y"":17.784150358490564},{""x"":0.2629013018867926,""y"":18.274716396226413},{""x"":0.26761828301886803,""y"":18.765282433962263},{""x"":0.27233526415094356,""y"":19.255848471698112}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 10.85 m to 10.36 m from goal immediately and to 8.41 m by the final waypoint, so progress is 0.49 m selected / 2.45 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.65 m against manifest obstacles with 0 violating segment(s).""}",0.2534673396226417,17.293584320754714,-2.5,0.2581843207547171,17.784150358490564,-2.5,0.2629013018867926,18.274716396226413,-2.5,0.26761828301886803,18.765282433962263,-2.5,0.27233526415094356,19.255848471698112,-2.5
+1773806864.212908745,1773806864.212908745,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.26, 17.06, -2.49) m.
+- Current velocity is (-0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.83, 10.57, -0.01) m with distance 10.60 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 15. Nearest depth obstacle in NED is at (-1.80, 19.63, -2.60) m, relative vector (-2.06, 2.57, -0.11) m, distance 3.30 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 2.55 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [2.55, 5.03, 5.03, 5.03, 5.03] m.
+- Nearest obstacle sector is far_left at 2.55 m and clearance status is caution.
+- Lateral planning hint: right side is clearer.","{""waypoints"":[{""x"":0.2581843207547171,""y"":17.784150358490564},{""x"":0.2629013018867926,""y"":18.274716396226413},{""x"":0.26761828301886803,""y"":18.765282433962263},{""x"":0.27233526415094356,""y"":19.255848471698112},{""x"":0.277052245283019,""y"":19.746414509433965}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 10.36 m to 9.87 m from goal immediately and to 7.92 m by the final waypoint, so progress is 0.49 m selected / 2.44 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.65 m against manifest obstacles with 0 violating segment(s).""}",0.2581843207547171,17.784150358490564,-2.5,0.2629013018867926,18.274716396226413,-2.5,0.26761828301886803,18.765282433962263,-2.5,0.27233526415094356,19.255848471698112,-2.5,0.277052245283019,19.746414509433965,-2.5
+1773806870.617719412,1773806870.617719412,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.27, 17.54, -2.50) m.
+- Current velocity is (-0.01, 0.08, 0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.82, 10.08, -0.00) m with distance 10.11 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 12. Nearest depth obstacle in NED is at (2.97, 23.01, -2.75) m, relative vector (2.70, 5.46, -0.25) m, distance 6.10 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 5.08 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.10, 5.10, 5.10, 5.10, 5.08] m.
+- Nearest obstacle sector is far_right at 5.08 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.2629013018867926,""y"":18.274716396226413},{""x"":0.26761828301886803,""y"":18.765282433962263},{""x"":0.27233526415094356,""y"":19.255848471698112},{""x"":0.277052245283019,""y"":19.746414509433965},{""x"":0.2817692264150945,""y"":20.236980547169814}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 9.87 m to 9.39 m from goal immediately and to 7.43 m by the final waypoint, so progress is 0.49 m selected / 2.44 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.65 m against manifest obstacles with 0 violating segment(s).""}",0.2629013018867926,18.274716396226413,-2.5,0.26761828301886803,18.765282433962263,-2.5,0.27233526415094356,19.255848471698112,-2.5,0.277052245283019,19.746414509433965,-2.5,0.2817692264150945,20.236980547169814,-2.5
+1773806876.607372284,1773806876.607372284,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.26, 18.04, -2.51) m.
+- Current velocity is (-0.00, 0.11, 0.01) m/s (speed 0.12 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.83, 9.59, 0.01) m with distance 9.62 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 15. Nearest depth obstacle in NED is at (2.97, 23.02, -2.49) m, relative vector (2.71, 4.98, 0.02) m, distance 5.67 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 4.60 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.04, 5.04, 5.04, 5.04, 4.60] m.
+- Nearest obstacle sector is far_right at 4.60 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.26761828301886803,""y"":18.765282433962263},{""x"":0.27233526415094356,""y"":19.255848471698112},{""x"":0.277052245283019,""y"":19.746414509433965},{""x"":0.2817692264150945,""y"":20.236980547169814},{""x"":0.28648620754716997,""y"":20.72754658490566}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 9.39 m to 8.90 m from goal immediately and to 6.94 m by the final waypoint, so progress is 0.49 m selected / 2.44 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.50 m against manifest obstacles with 0 violating segment(s).""}",0.26761828301886803,18.765282433962263,-2.5,0.27233526415094356,19.255848471698112,-2.5,0.277052245283019,19.746414509433965,-2.5,0.2817692264150945,20.236980547169814,-2.5,0.28648620754716997,20.72754658490566,-2.5
+1773806882.819518805,1773806882.819518805,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.27, 18.52, -2.50) m.
+- Current velocity is (0.00, 0.08, 0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.82, 9.10, -0.00) m with distance 9.14 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 15. Nearest depth obstacle in NED is at (3.03, 22.99, -2.36) m, relative vector (2.76, 4.47, 0.14) m, distance 5.26 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 4.15 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.99, 4.99, 4.99, 4.99, 4.15] m.
+- Nearest obstacle sector is far_right at 4.15 m and clearance status is clear.
+- Lateral planning hint: left side is clearer.","{""waypoints"":[{""x"":0.27233526415094356,""y"":19.255848471698112},{""x"":0.277052245283019,""y"":19.746414509433965},{""x"":0.2817692264150945,""y"":20.236980547169814},{""x"":0.28648620754716997,""y"":20.72754658490566},{""x"":0.29120318867924544,""y"":21.21811262264151}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 8.90 m to 8.41 m from goal immediately and to 6.46 m by the final waypoint, so progress is 0.49 m selected / 2.44 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.28 m against manifest obstacles with 0 violating segment(s).""}",0.27233526415094356,19.255848471698112,-2.5,0.277052245283019,19.746414509433965,-2.5,0.2817692264150945,20.236980547169814,-2.5,0.28648620754716997,20.72754658490566,-2.5,0.29120318867924544,21.21811262264151,-2.5
+1773806887.904790401,1773806887.904790401,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.27, 19.01, -2.50) m.
+- Current velocity is (0.00, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.82, 8.61, -0.00) m with distance 8.65 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 7. Nearest depth obstacle in NED is at (2.89, 23.20, -2.45) m, relative vector (2.62, 4.19, 0.04) m, distance 4.94 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 3.89 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.03, 5.03, 5.03, 5.03, 3.89] m.
+- Nearest obstacle sector is far_right at 3.89 m and clearance status is clear.
+- Lateral planning hint: left side is clearer.","{""waypoints"":[{""x"":0.277052245283019,""y"":19.746414509433965},{""x"":0.2817692264150945,""y"":20.236980547169814},{""x"":0.28648620754716997,""y"":20.72754658490566},{""x"":0.29120318867924544,""y"":21.21811262264151},{""x"":0.2959201698113209,""y"":21.70867866037736}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 8.41 m to 7.92 m from goal immediately and to 5.97 m by the final waypoint, so progress is 0.49 m selected / 2.44 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.13 m against manifest obstacles with 0 violating segment(s).""}",0.277052245283019,19.746414509433965,-2.5,0.2817692264150945,20.236980547169814,-2.5,0.28648620754716997,20.72754658490566,-2.5,0.29120318867924544,21.21811262264151,-2.5,0.2959201698113209,21.70867866037736,-2.5
+1773806893.390059233,1773806893.390059233,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.31, 19.50, -2.50) m.
+- Current velocity is (0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.78, 8.12, -0.00) m with distance 8.16 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 29. Nearest depth obstacle in NED is at (-0.03, 27.77, -2.67) m, relative vector (-0.34, 8.27, -0.17) m, distance 8.28 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 5.03 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.05, 5.05, 5.04, 5.04, 5.03] m.
+- Nearest obstacle sector is far_right at 5.03 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.2817692264150945,""y"":20.236980547169814},{""x"":0.28648620754716997,""y"":20.72754658490566},{""x"":0.29120318867924544,""y"":21.21811262264151},{""x"":0.2959201698113209,""y"":21.70867866037736},{""x"":0.3006371509433964,""y"":22.19924469811321}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 7.92 m to 7.43 m from goal immediately and to 5.48 m by the final waypoint, so progress is 0.49 m selected / 2.44 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.07 m against manifest obstacles with 0 violating segment(s).""}",0.2817692264150945,20.236980547169814,-2.5,0.28648620754716997,20.72754658490566,-2.5,0.29120318867924544,21.21811262264151,-2.5,0.2959201698113209,21.70867866037736,-2.5,0.3006371509433964,22.19924469811321,-2.5
+1773806899.432497978,1773806899.432497978,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.31, 20.00, -2.50) m.
+- Current velocity is (-0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.78, 7.63, 0.00) m with distance 7.67 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 31. Nearest depth obstacle in NED is at (-3.38, 28.70, -2.51) m, relative vector (-3.69, 8.71, -0.00) m, distance 9.45 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 4.99 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.01, 5.00, 5.00, 5.00, 4.99] m.
+- Nearest obstacle sector is far_right at 4.99 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.28648620754716997,""y"":20.72754658490566},{""x"":0.29120318867924544,""y"":21.21811262264151},{""x"":0.2959201698113209,""y"":21.70867866037736},{""x"":0.3006371509433964,""y"":22.19924469811321},{""x"":0.30535413207547185,""y"":22.689810735849058}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 7.43 m to 6.94 m from goal immediately and to 5.00 m by the final waypoint, so progress is 0.49 m selected / 2.43 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.07 m against manifest obstacles with 0 violating segment(s).""}",0.28648620754716997,20.72754658490566,-2.5,0.29120318867924544,21.21811262264151,-2.5,0.2959201698113209,21.70867866037736,-2.5,0.3006371509433964,22.19924469811321,-2.5,0.30535413207547185,22.689810735849058,-2.5
+1773806904.360857964,1773806904.360857964,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.27, 20.49, -2.48) m.
+- Current velocity is (0.00, 0.09, 0.00) m/s (speed 0.09 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.82, 7.14, -0.02) m with distance 7.18 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 53. Nearest depth obstacle in NED is at (-0.21, 28.25, -2.17) m, relative vector (-0.48, 7.76, 0.31) m, distance 7.78 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 5.06 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.06, 5.06, 5.06, 5.06, 5.07] m.
+- Nearest obstacle sector is far_left at 5.06 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.29120318867924544,""y"":21.21811262264151},{""x"":0.2959201698113209,""y"":21.70867866037736},{""x"":0.3006371509433964,""y"":22.19924469811321},{""x"":0.30535413207547185,""y"":22.689810735849058},{""x"":0.3100711132075473,""y"":23.180376773584907}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 6.94 m to 6.46 m from goal immediately and to 4.51 m by the final waypoint, so progress is 0.49 m selected / 2.43 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.07 m against manifest obstacles with 0 violating segment(s).""}",0.29120318867924544,21.21811262264151,-2.5,0.2959201698113209,21.70867866037736,-2.5,0.3006371509433964,22.19924469811321,-2.5,0.30535413207547185,22.689810735849058,-2.5,0.3100711132075473,23.180376773584907,-2.5
+1773806910.401322126,1773806910.401322126,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.27, 20.97, -2.49) m.
+- Current velocity is (0.00, 0.08, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.82, 6.65, -0.01) m with distance 6.70 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 33. Nearest depth obstacle in NED is at (-0.39, 28.31, -2.24) m, relative vector (-0.66, 7.34, 0.25) m, distance 7.37 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 5.09 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.09, 5.09, 5.09, 5.09, 5.09] m.
+- Nearest obstacle sector is far_right at 5.09 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.2959201698113209,""y"":21.70867866037736},{""x"":0.3006371509433964,""y"":22.19924469811321},{""x"":0.30535413207547185,""y"":22.689810735849058},{""x"":0.3100711132075473,""y"":23.180376773584907},{""x"":0.3147880943396228,""y"":23.670942811320757}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 6.46 m to 5.97 m from goal immediately and to 4.03 m by the final waypoint, so progress is 0.49 m selected / 2.43 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.07 m against manifest obstacles with 0 violating segment(s).""}",0.2959201698113209,21.70867866037736,-2.5,0.3006371509433964,22.19924469811321,-2.5,0.30535413207547185,22.689810735849058,-2.5,0.3100711132075473,23.180376773584907,-2.5,0.3147880943396228,23.670942811320757,-2.5
+1773806916.748528242,1773806916.748528242,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.29, 21.46, -2.51) m.
+- Current velocity is (-0.01, 0.05, 0.01) m/s (speed 0.05 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.80, 6.16, 0.01) m with distance 6.21 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 38. Nearest depth obstacle in NED is at (-0.19, 28.32, -2.04) m, relative vector (-0.48, 6.85, 0.46) m, distance 6.89 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 5.01 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.02, 5.02, 5.02, 5.02, 5.01] m.
+- Nearest obstacle sector is far_right at 5.01 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.3006371509433964,""y"":22.19924469811321},{""x"":0.30535413207547185,""y"":22.689810735849058},{""x"":0.3100711132075473,""y"":23.180376773584907},{""x"":0.3147880943396228,""y"":23.670942811320757},{""x"":0.31950507547169826,""y"":24.161508849056602}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 5.97 m to 5.48 m from goal immediately and to 3.55 m by the final waypoint, so progress is 0.49 m selected / 2.42 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.07 m against manifest obstacles with 0 violating segment(s).""}",0.3006371509433964,22.19924469811321,-2.5,0.30535413207547185,22.689810735849058,-2.5,0.3100711132075473,23.180376773584907,-2.5,0.3147880943396228,23.670942811320757,-2.5,0.31950507547169826,24.161508849056602,-2.5
+1773806922.617815971,1773806922.617815971,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.33, 21.96, -2.50) m.
+- Current velocity is (0.00, 0.07, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.76, 5.67, 0.00) m with distance 5.72 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 53. Nearest depth obstacle in NED is at (-3.29, 28.55, -2.46) m, relative vector (-3.61, 6.59, 0.05) m, distance 7.52 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 5.01 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.03, 5.02, 5.02, 5.01, 5.01] m.
+- Nearest obstacle sector is far_right at 5.01 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.30535413207547185,""y"":22.689810735849058},{""x"":0.3100711132075473,""y"":23.180376773584907},{""x"":0.3147880943396228,""y"":23.670942811320757},{""x"":0.31950507547169826,""y"":24.161508849056602},{""x"":0.32422205660377373,""y"":24.65207488679245}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 5.48 m to 5.00 m from goal immediately and to 3.07 m by the final waypoint, so progress is 0.49 m selected / 2.41 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.07 m against manifest obstacles with 0 violating segment(s).""}",0.30535413207547185,22.689810735849058,-2.5,0.3100711132075473,23.180376773584907,-2.5,0.3147880943396228,23.670942811320757,-2.5,0.31950507547169826,24.161508849056602,-2.5,0.32422205660377373,24.65207488679245,-2.5
+1773806928.636463881,1773806928.636463881,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.31, 22.45, -2.49) m.
+- Current velocity is (0.00, 0.06, 0.00) m/s (speed 0.06 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.78, 5.18, -0.01) m with distance 5.24 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 40. Nearest depth obstacle in NED is at (-0.07, 28.24, -2.25) m, relative vector (-0.38, 5.79, 0.24) m, distance 5.81 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 5.01 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.01, 5.01, 5.01, 5.01, 5.01] m.
+- Nearest obstacle sector is far_right at 5.01 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.3100711132075473,""y"":23.180376773584907},{""x"":0.3147880943396228,""y"":23.670942811320757},{""x"":0.31950507547169826,""y"":24.161508849056602},{""x"":0.32422205660377373,""y"":24.65207488679245},{""x"":0.3289390377358492,""y"":25.1426409245283}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 5.00 m to 4.51 m from goal immediately and to 2.59 m by the final waypoint, so progress is 0.48 m selected / 2.40 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.11 m against manifest obstacles with 0 violating segment(s).""}",0.3100711132075473,23.180376773584907,-2.5,0.3147880943396228,23.670942811320757,-2.5,0.31950507547169826,24.161508849056602,-2.5,0.32422205660377373,24.65207488679245,-2.5,0.3289390377358492,25.1426409245283,-2.5
+1773806934.543039799,1773806934.543039799,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.30, 22.94, -2.48) m.
+- Current velocity is (0.00, 0.08, 0.00) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.79, 4.68, -0.02) m with distance 4.75 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 51. Nearest depth obstacle in NED is at (-0.21, 27.79, -2.62) m, relative vector (-0.51, 4.84, -0.14) m, distance 4.87 m.
+- Depth validity fraction is 0.58. Global nearest obstacle distance is 4.67 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.01, 5.02, 4.67, 5.02, 5.02] m.
+- Nearest obstacle sector is center at 4.67 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.3147880943396228,""y"":23.670942811320757},{""x"":0.31950507547169826,""y"":24.161508849056602},{""x"":0.32422205660377373,""y"":24.65207488679245},{""x"":0.3289390377358492,""y"":25.1426409245283},{""x"":0.3336560188679247,""y"":25.63320696226415}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 4.51 m to 4.03 m from goal immediately and to 2.13 m by the final waypoint, so progress is 0.48 m selected / 2.38 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.23 m against manifest obstacles with 0 violating segment(s).""}",0.3147880943396228,23.670942811320757,-2.5,0.31950507547169826,24.161508849056602,-2.5,0.32422205660377373,24.65207488679245,-2.5,0.3289390377358492,25.1426409245283,-2.5,0.3336560188679247,25.63320696226415,-2.5
+1773806940.896180630,1773806940.896180630,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.30, 23.43, -2.49) m.
+- Current velocity is (-0.00, 0.07, 0.01) m/s (speed 0.08 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.79, 4.20, -0.01) m with distance 4.27 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 67. Nearest depth obstacle in NED is at (-0.62, 28.18, -2.65) m, relative vector (-0.92, 4.75, -0.16) m, distance 4.84 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 4.20 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.06, 5.06, 4.20, 5.07, 5.07] m.
+- Nearest obstacle sector is center at 4.20 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.31950507547169826,""y"":24.161508849056602},{""x"":0.32422205660377373,""y"":24.65207488679245},{""x"":0.3289390377358492,""y"":25.1426409245283},{""x"":0.3336560188679247,""y"":25.63320696226415},{""x"":0.33837300000000015,""y"":26.123773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 4.03 m to 3.55 m from goal immediately and to 1.68 m by the final waypoint, so progress is 0.48 m selected / 2.35 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.44 m against manifest obstacles with 0 violating segment(s).""}",0.31950507547169826,24.161508849056602,-2.5,0.32422205660377373,24.65207488679245,-2.5,0.3289390377358492,25.1426409245283,-2.5,0.3336560188679247,25.63320696226415,-2.5,0.33837300000000015,26.123773,-2.5
+1773806947.158999443,1773806947.158999443,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.28, 23.92, -2.50) m.
+- Current velocity is (0.00, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.81, 3.71, -0.00) m with distance 3.79 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 82. Nearest depth obstacle in NED is at (-0.07, 27.74, -2.63) m, relative vector (-0.35, 3.82, -0.13) m, distance 3.84 m.
+- Depth validity fraction is 0.59. Global nearest obstacle distance is 3.69 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.64, 3.97, 3.69, 4.18, 5.02] m.
+- Nearest obstacle sector is center at 3.69 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.32422205660377373,""y"":24.65207488679245},{""x"":0.3289390377358492,""y"":25.1426409245283},{""x"":0.3336560188679247,""y"":25.63320696226415},{""x"":0.33837300000000015,""y"":26.123773},{""x"":0.5258730000000001,""y"":26.498773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 3.55 m to 3.07 m from goal immediately and to 1.26 m by the final waypoint, so progress is 0.48 m selected / 2.29 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.72 m against manifest obstacles with 0 violating segment(s).""}",0.32422205660377373,24.65207488679245,-2.5,0.3289390377358492,25.1426409245283,-2.5,0.3336560188679247,25.63320696226415,-2.5,0.33837300000000015,26.123773,-2.5,0.5258730000000001,26.498773,-2.5
+1773806952.451229095,1773806952.451229095,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.33, 24.41, -2.49) m.
+- Current velocity is (-0.01, 0.07, 0.01) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.76, 3.22, -0.01) m with distance 3.30 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 93. Nearest depth obstacle in NED is at (0.35, 28.09, -2.64) m, relative vector (0.02, 3.68, -0.15) m, distance 3.69 m.
+- Depth validity fraction is 0.60. Global nearest obstacle distance is 3.21 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.27, 3.45, 3.21, 3.41, 5.06] m.
+- Nearest obstacle sector is center at 3.21 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.3289390377358492,""y"":25.1426409245283},{""x"":0.3336560188679247,""y"":25.63320696226415},{""x"":0.33837300000000015,""y"":26.123773},{""x"":0.5258730000000001,""y"":26.498773},{""x"":0.7133730000000001,""y"":26.873773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 3.07 m to 2.59 m from goal immediately and to 0.84 m by the final waypoint, so progress is 0.47 m selected / 2.23 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 3.04 m against manifest obstacles with 0 violating segment(s).""}",0.3289390377358492,25.1426409245283,-2.5,0.3336560188679247,25.63320696226415,-2.5,0.33837300000000015,26.123773,-2.5,0.5258730000000001,26.498773,-2.5,0.7133730000000001,26.873773,-2.5
+1773806959.729640722,1773806959.729640722,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.31, 24.90, -2.50) m.
+- Current velocity is (0.00, 0.07, 0.00) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.78, 2.72, -0.00) m with distance 2.83 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 98. Nearest depth obstacle in NED is at (-0.07, 27.76, -2.64) m, relative vector (-0.38, 2.86, -0.14) m, distance 2.89 m.
+- Depth validity fraction is 0.61. Global nearest obstacle distance is 2.71 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.01, 2.84, 2.71, 2.87, 5.02] m.
+- Nearest obstacle sector is center at 2.71 m and clearance status is caution.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.3336560188679247,""y"":25.63320696226415},{""x"":0.33837300000000015,""y"":26.123773},{""x"":0.5258730000000001,""y"":26.498773},{""x"":0.7133730000000001,""y"":26.873773},{""x"":0.9008730000000001,""y"":27.248773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 2.59 m to 2.13 m from goal immediately and to 0.42 m by the final waypoint, so progress is 0.47 m selected / 2.18 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 3.40 m against manifest obstacles with 0 violating segment(s).""}",0.3336560188679247,25.63320696226415,-2.5,0.33837300000000015,26.123773,-2.5,0.5258730000000001,26.498773,-2.5,0.7133730000000001,26.873773,-2.5,0.9008730000000001,27.248773,-2.5
+1773806965.943289757,1773806965.943289757,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.38, 25.39, -2.49) m.
+- Current velocity is (-0.02, 0.09, 0.00) m/s (speed 0.10 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.71, 2.24, -0.01) m with distance 2.34 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 113. Nearest depth obstacle in NED is at (0.26, 27.75, -2.66) m, relative vector (-0.12, 2.36, -0.17) m, distance 2.37 m.
+- Depth validity fraction is 0.63. Global nearest obstacle distance is 2.23 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.07, 2.33, 2.23, 2.31, 5.05] m.
+- Nearest obstacle sector is center at 2.23 m and clearance status is caution.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":0.33837300000000015,""y"":26.123773},{""x"":0.5258730000000001,""y"":26.498773},{""x"":0.7133730000000001,""y"":26.873773},{""x"":0.9008730000000001,""y"":27.248773},{""x"":1.0883730000000003,""y"":27.623773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 2.13 m to 1.68 m from goal immediately and to 0.00 m by the final waypoint, so progress is 0.45 m selected / 2.13 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal will be reached in 5 waypoint(s) within 0.35 m tolerance. Safety passes: minimum clearance 3.21 m against manifest obstacles with 0 violating segment(s).""}",0.33837300000000015,26.123773,-2.5,0.5258730000000001,26.498773,-2.5,0.7133730000000001,26.873773,-2.5,0.9008730000000001,27.248773,-2.5,1.0883730000000003,27.623773,-2.5
+1773806972.046570539,1773806972.046570539,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.30, 25.88, -2.49) m.
+- Current velocity is (0.01, 0.05, 0.00) m/s (speed 0.05 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.79, 1.74, -0.01) m with distance 1.92 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 136. Nearest depth obstacle in NED is at (0.05, 27.76, -2.63) m, relative vector (-0.25, 1.88, -0.13) m, distance 1.90 m.
+- Depth validity fraction is 0.66. Global nearest obstacle distance is 1.75 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.01, 1.79, 1.75, 1.82, 5.01] m.
+- Nearest obstacle sector is center at 1.75 m and clearance status is caution.
+- Lateral planning hint: prefer center progress.","{""waypoints"":[{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 1.68 m to 0.00 m from goal immediately and to 0.00 m by the final waypoint, so progress is 1.68 m selected / 1.68 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 1 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal will be reached in 1 waypoint(s) within 0.35 m tolerance. Safety passes: minimum clearance 3.21 m against manifest obstacles with 0 violating segment(s).""}",1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5
+1773806978.066581011,1773806978.066581011,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.48, 26.29, -2.48) m.
+- Current velocity is (0.02, 0.07, -0.00) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.61, 1.34, -0.02) m with distance 1.47 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 202. Nearest depth obstacle in NED is at (0.51, 27.74, -2.60) m, relative vector (0.03, 1.45, -0.12) m, distance 1.46 m.
+- Depth validity fraction is 0.70. Global nearest obstacle distance is 1.32 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [5.01, 1.41, 1.32, 1.32, 1.68] m.
+- Nearest obstacle sector is center at 1.32 m and clearance status is blocked.
+- Lateral planning hint: left side is clearer.","{""waypoints"":[{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 1.26 m to 0.00 m from goal immediately and to 0.00 m by the final waypoint, so progress is 1.26 m selected / 1.26 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 1 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal will be reached in 1 waypoint(s) within 0.35 m tolerance. Safety passes: minimum clearance 3.21 m against manifest obstacles with 0 violating segment(s).""}",1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5
+1773806984.348898649,1773806984.348898649,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.63, 26.68, -2.50) m.
+- Current velocity is (0.03, 0.06, 0.00) m/s (speed 0.07 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.46, 0.94, 0.00) m with distance 1.05 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 228. Nearest depth obstacle in NED is at (0.71, 27.76, -2.67) m, relative vector (0.08, 1.08, -0.17) m, distance 1.10 m.
+- Depth validity fraction is 0.71. Global nearest obstacle distance is 0.92 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.64, 1.10, 0.94, 0.92, 0.93] m.
+- Nearest obstacle sector is right at 0.92 m and clearance status is blocked.
+- Lateral planning hint: left side is clearer.","{""waypoints"":[{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 0.84 m to 0.00 m from goal immediately and to 0.00 m by the final waypoint, so progress is 0.84 m selected / 0.84 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 1 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal will be reached in 1 waypoint(s) within 0.35 m tolerance. Safety passes: minimum clearance 3.21 m against manifest obstacles with 0 violating segment(s).""}",1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5
+1773806991.655615091,1773806991.655615091,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (0.80, 27.07, -2.53) m.
+- Current velocity is (0.01, 0.03, 0.01) m/s (speed 0.04 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.29, 0.56, 0.03) m with distance 0.63 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 269. Nearest depth obstacle in NED is at (0.78, 27.95, -2.68) m, relative vector (-0.02, 0.88, -0.15) m, distance 0.89 m.
+- Depth validity fraction is 0.73. Global nearest obstacle distance is 0.75 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.23, 0.82, 0.75, 0.75, 0.75] m.
+- Nearest obstacle sector is center at 0.75 m and clearance status is blocked.
+- Lateral planning hint: left side is clearer.","{""waypoints"":[{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 0.42 m to 0.00 m from goal immediately and to 0.00 m by the final waypoint, so progress is 0.42 m selected / 0.42 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 1 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal will be reached in 1 waypoint(s) within 0.35 m tolerance. Safety passes: minimum clearance 3.21 m against manifest obstacles with 0 violating segment(s).""}",1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5
+1773806997.172960043,1773806997.172960043,0.000,offline_ground_truth_window,"Environment section (T(v)):
+- Current position NED is (1.01, 27.43, -2.50) m.
+- Current velocity is (0.03, 0.04, 0.00) m/s (speed 0.05 m/s).
+- Goal position NED is (1.09, 27.62, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.07, 0.20, -0.00) m with distance 0.21 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 205. Nearest depth obstacle in NED is at (1.00, 28.31, -2.65) m, relative vector (-0.02, 0.89, -0.15) m, distance 0.90 m.
+- Depth validity fraction is 0.68. Global nearest obstacle distance is 0.70 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [3.89, 3.86, 0.74, 0.74, 0.70] m.
+- Nearest obstacle sector is far_right at 0.70 m and clearance status is blocked.
+- Lateral planning hint: left side is clearer.","{""waypoints"":[{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773},{""x"":1.0883730000000003,""y"":27.623773}],""reasoning"":""Selected waypoint 0 moves the reference anchor from 0.00 m to 0.00 m from goal immediately and to 0.00 m by the final waypoint, so progress is 0.00 m selected / 0.00 m final and fails with monotonic goal-distance reduction. Kinematics is evaluated on 1 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal has already been reached at the reference anchor within 0.35 m tolerance. Safety passes: minimum clearance 3.21 m against manifest obstacles with 0 violating segment(s).""}",1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5,1.0883730000000003,27.623773,-2.5
