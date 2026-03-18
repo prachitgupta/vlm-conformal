@@ -50,6 +50,7 @@ DEFAULT_API_KEY = "token-abc123"
 DEFAULT_MASTER_READY_MARKER = "Opening Terminal 3: MicroXRCEAgent"
 DEFAULT_ODOM_TOPIC = "/fmu/out/vehicle_odometry"
 DEFAULT_MISSION_UDP_PORT = 14540
+DEFAULT_GOAL_FRAME = "gazebo"
 # 2048 matches the training-time sequence budget in scripts/train.py and is
 # large enough for the current llm_prompt2d.txt + environment text + JSON reply.
 # You can raise this later if prompts grow, but using a much larger value than
@@ -109,6 +110,14 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=10.0,
         help="How long to wait for stale MAVSDK/mission processes to release the UDP port.",
+    )
+    parser.add_argument(
+        "--goal-frame",
+        default=DEFAULT_GOAL_FRAME,
+        help=(
+            "Goal frame passed to llm_planner. Use 'gazebo' for ENU world-frame goals "
+            "in simulation, or 'ned' if you are already supplying NED coordinates."
+        ),
     )
     parser.add_argument("--cuda-visible-devices", default="1")
     parser.add_argument("--vllm-host", default=DEFAULT_VLLM_HOST)
@@ -400,6 +409,7 @@ def main() -> int:
         name="llm_planner",
         cmd=ros_wrapped(
             "ros2 run llm_drone llm --ros-args "
+            f"-p goal_frame:={args.goal_frame} "
             f"-p llm_provider:=vllm "
             f"-p vllm_url:={vllm_url} "
             f"-p vllm_model:={args.served_model_name} "
