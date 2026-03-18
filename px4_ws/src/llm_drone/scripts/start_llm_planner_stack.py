@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -48,6 +49,7 @@ DEFAULT_VLLM_HOST = "127.0.0.1"
 DEFAULT_API_KEY = "token-abc123"
 DEFAULT_MASTER_READY_MARKER = "Opening Terminal 3: MicroXRCEAgent"
 DEFAULT_ODOM_TOPIC = "/fmu/out/vehicle_odometry"
+DEFAULT_MISSION_UDP_PORT = 14540
 # 2048 matches the training-time sequence budget in scripts/train.py and is
 # large enough for the current llm_prompt2d.txt + environment text + JSON reply.
 # You can raise this later if prompts grow, but using a much larger value than
@@ -95,6 +97,18 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=120.0,
         help="How long to wait for the odometry topic to produce a message.",
+    )
+    parser.add_argument(
+        "--mission-udp-port",
+        type=int,
+        default=DEFAULT_MISSION_UDP_PORT,
+        help="UDP port that mission_executor's MAVSDK client must be able to bind before launch.",
+    )
+    parser.add_argument(
+        "--port-cleanup-timeout-s",
+        type=float,
+        default=10.0,
+        help="How long to wait for stale MAVSDK/mission processes to release the UDP port.",
     )
     parser.add_argument("--cuda-visible-devices", default="1")
     parser.add_argument("--vllm-host", default=DEFAULT_VLLM_HOST)
@@ -291,6 +305,54 @@ def wait_for_ros_topic_message(topic: str, timeout_s: float) -> None:
     )
 
 
+def kill_matching_processes(patterns: list[str]) -> None:
+    """Best-effort cleanup for stale mission/MAVSDK processes.
+
+    We only do this immediately before launching mission_executor. These are the
+    two process families that most often keep UDP 14540 bound after a failed or
+    manually interrupted run:
+    - ros2 run llm_drone mission_executor
+    - mavsdk_server
+    """
+    for pattern in patterns:
+        subprocess.run(
+            ["pkill", "-f", pattern],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+
+
+def udp_port_is_bindable(port: int) -> bool:
+    """Return True if we can bind the MAVSDK UDP port locally right now."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("0.0.0.0", int(port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def ensure_udp_port_free(port: int, timeout_s: float) -> None:
+    """Wait until the mission UDP port is free, failing loudly if not.
+
+    Binding here is only a probe. We immediately close the socket again. The
+    real consumer will be MAVSDK inside mission_executor, but this check catches
+    stale processes before we start another takeoff cycle.
+    """
+    deadline = time.monotonic() + float(timeout_s)
+    while time.monotonic() < deadline:
+        if udp_port_is_bindable(port):
+            return
+        time.sleep(0.5)
+    raise RuntimeError(
+        f"UDP port {port} is still in use after cleanup. "
+        "A stale mission_executor or mavsdk_server is likely still running."
+    )
+
+
 def main() -> int:
     args = parse_args()
     if not args.master_command:
@@ -390,6 +452,24 @@ def main() -> int:
             flush=True,
         )
         wait_for_ros_topic_message(args.odom_topic, timeout_s=args.odom_timeout_s)
+
+        # Before we launch mission_executor, clean up any stale MAVSDK-side
+        # processes from previous runs and make sure the UDP port it needs is
+        # genuinely free. Without this guard, a leftover mission_executor can
+        # keep controlling the vehicle and the new one will fail with
+        # "bind error: Address in use".
+        print(
+            f"[startup] cleaning stale mission/MAVSDK processes and checking UDP {args.mission_udp_port}",
+            flush=True,
+        )
+        kill_matching_processes(
+            [
+                "ros2 run llm_drone mission_executor",
+                "llm_drone/lib/llm_drone/mission_executor",
+                "mavsdk_server",
+            ]
+        )
+        ensure_udp_port_free(args.mission_udp_port, timeout_s=args.port_cleanup_timeout_s)
 
         # Only after PX4 is active and odometry is live do we start
         # mission_executor.
