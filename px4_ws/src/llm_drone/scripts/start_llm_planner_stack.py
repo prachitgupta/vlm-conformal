@@ -6,9 +6,10 @@ to be edited by hand during experiments. The default flow is:
 
 1. Launch the external PX4/Gazebo "master" script that brings up the simulator
    stack (Gazebo, PX4 SITL, MicroDDS/bridge tools, RQT if your script does so).
-2. Start the ROS mission executor and wait until PX4 reports the vehicle is
+2. Start a vLLM server hosting the merged fine-tuned model and wait until the
+   HTTP health endpoint responds.
+3. Start the ROS mission executor and wait until PX4 reports the vehicle is
    airborne and in OFFBOARD mode.
-3. In parallel, start a vLLM server hosting the merged fine-tuned model.
 4. Once both the mission side and the vLLM side are ready, launch llm_planner.
 
 If your lab setup changes, the easiest things to tweak are:
@@ -338,15 +339,20 @@ def main() -> int:
             )
             time.sleep(args.master_post_ready_delay_s)
 
-        print("[startup] launching mission_executor and vLLM in parallel", flush=True)
-        mission.start()
+        # Bring up the vLLM server first so the model-serving side is completely
+        # ready before we ask the vehicle stack to arm/take off.
+        print("[startup] launching vLLM server", flush=True)
         vllm.start()
-
-        print(f"[startup] waiting for mission readiness marker: {MISSION_READY_MARKER}", flush=True)
-        mission.wait_for_output(MISSION_READY_MARKER, timeout_s=args.mission_timeout_s)
 
         print(f"[startup] waiting for vLLM health endpoint: {vllm_health_url}", flush=True)
         wait_for_http_ready(vllm_health_url, timeout_s=args.vllm_timeout_s)
+
+        # Only after model serving is healthy do we start mission_executor.
+        print("[startup] launching mission_executor", flush=True)
+        mission.start()
+
+        print(f"[startup] waiting for mission readiness marker: {MISSION_READY_MARKER}", flush=True)
+        mission.wait_for_output(MISSION_READY_MARKER, timeout_s=args.mission_timeout_s)
 
         print("[startup] mission + vLLM are ready; launching llm_planner", flush=True)
         planner.start()
