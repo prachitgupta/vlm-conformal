@@ -6,11 +6,13 @@ to be edited by hand during experiments. The default flow is:
 
 1. Launch the external PX4/Gazebo "master" script that brings up the simulator
    stack (Gazebo, PX4 SITL, MicroDDS/bridge tools, RQT if your script does so).
-2. Start a vLLM server hosting the merged fine-tuned model and wait until the
-   HTTP health endpoint responds.
+2. Wait until the PX4 stack is active enough that ROS odometry is flowing on
+   `/fmu/out/vehicle_odometry`.
 3. Start the ROS mission executor and wait until PX4 reports the vehicle is
    airborne and in OFFBOARD mode.
-4. Once both the mission side and the vLLM side are ready, launch llm_planner.
+4. Start a vLLM server hosting the chosen model and wait until the HTTP health
+   endpoint responds.
+5. Once both the mission side and the vLLM side are ready, launch llm_planner.
 
 If your lab setup changes, the easiest things to tweak are:
 - DEFAULT_MASTER_COMMAND
@@ -45,6 +47,7 @@ DEFAULT_VLLM_PORT = 8000
 DEFAULT_VLLM_HOST = "127.0.0.1"
 DEFAULT_API_KEY = "token-abc123"
 DEFAULT_MASTER_READY_MARKER = "Opening Terminal 3: MicroXRCEAgent"
+DEFAULT_ODOM_TOPIC = "/fmu/out/vehicle_odometry"
 # 2048 matches the training-time sequence budget in scripts/train.py and is
 # large enough for the current llm_prompt2d.txt + environment text + JSON reply.
 # You can raise this later if prompts grow, but using a much larger value than
@@ -81,6 +84,17 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=4.0,
         help="Extra settle time after the master ready marker before mission_executor starts.",
+    )
+    parser.add_argument(
+        "--odom-topic",
+        default=DEFAULT_ODOM_TOPIC,
+        help="ROS topic that must produce at least one message before mission_executor is launched.",
+    )
+    parser.add_argument(
+        "--odom-timeout-s",
+        type=float,
+        default=120.0,
+        help="How long to wait for the odometry topic to produce a message.",
     )
     parser.add_argument("--cuda-visible-devices", default="1")
     parser.add_argument("--vllm-host", default=DEFAULT_VLLM_HOST)
@@ -247,6 +261,36 @@ def wait_for_http_ready(url: str, timeout_s: float) -> None:
     raise TimeoutError(f"Timed out waiting for vLLM readiness at {url} ({last_error})")
 
 
+def wait_for_ros_topic_message(topic: str, timeout_s: float) -> None:
+    """Wait until a ROS topic produces at least one message.
+
+    We intentionally probe the real ROS graph here instead of trusting only the
+    master launcher's printouts. In practice this is the clearest signal that
+    PX4, the DDS path, and the ROS workspace are alive enough for
+    mission_executor to connect successfully.
+    """
+    probe_cmd = ros_wrapped(
+        f"timeout 5 ros2 topic echo --once {topic} >/tmp/start_llm_planner_stack_odom_probe.log 2>&1"
+    )
+    deadline = time.monotonic() + float(timeout_s)
+    last_exit_code = None
+    while time.monotonic() < deadline:
+        probe = subprocess.run(
+            ["bash", "-lc", probe_cmd],
+            text=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        last_exit_code = probe.returncode
+        if probe.returncode == 0:
+            return
+        time.sleep(1.0)
+    raise TimeoutError(
+        f"Timed out waiting for ROS topic {topic!r} to emit a message "
+        f"(last probe exit code {last_exit_code})"
+    )
+
+
 def main() -> int:
     args = parse_args()
     if not args.master_command:
@@ -339,20 +383,31 @@ def main() -> int:
             )
             time.sleep(args.master_post_ready_delay_s)
 
-        # Bring up the vLLM server first so the model-serving side is completely
-        # ready before we ask the vehicle stack to arm/take off.
-        print("[startup] launching vLLM server", flush=True)
-        vllm.start()
+        # The next gate is stronger than a fixed sleep: do not touch
+        # mission_executor until ROS odometry is actually flowing.
+        print(
+            f"[startup] waiting for odometry topic to produce data: {args.odom_topic}",
+            flush=True,
+        )
+        wait_for_ros_topic_message(args.odom_topic, timeout_s=args.odom_timeout_s)
 
-        print(f"[startup] waiting for vLLM health endpoint: {vllm_health_url}", flush=True)
-        wait_for_http_ready(vllm_health_url, timeout_s=args.vllm_timeout_s)
-
-        # Only after model serving is healthy do we start mission_executor.
+        # Only after PX4 is active and odometry is live do we start
+        # mission_executor.
         print("[startup] launching mission_executor", flush=True)
         mission.start()
 
         print(f"[startup] waiting for mission readiness marker: {MISSION_READY_MARKER}", flush=True)
         mission.wait_for_output(MISSION_READY_MARKER, timeout_s=args.mission_timeout_s)
+
+        # Bring up the model server only after the vehicle is already airborne
+        # and stable in OFFBOARD. This keeps vLLM startup completely out of the
+        # critical path for takeoff and avoids GPU/model initialization noise
+        # interfering with sim bring-up experiments.
+        print("[startup] launching vLLM server", flush=True)
+        vllm.start()
+
+        print(f"[startup] waiting for vLLM health endpoint: {vllm_health_url}", flush=True)
+        wait_for_http_ready(vllm_health_url, timeout_s=args.vllm_timeout_s)
 
         print("[startup] mission + vLLM are ready; launching llm_planner", flush=True)
         planner.start()
