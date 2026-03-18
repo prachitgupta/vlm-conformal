@@ -11,8 +11,12 @@ Usage:
 
 import asyncio
 import argparse
+import builtins
+from functools import partial
 from mavsdk import System, telemetry
 from mavsdk.offboard import OffboardError, VelocityBodyYawspeed
+
+print = partial(builtins.print, flush=True)
 
 
 class MissionExecutor:
@@ -22,41 +26,58 @@ class MissionExecutor:
         self.drone = System()
         self.connection_string = connection_string
         self.mission_state = "IDLE"
+
+    async def _wait_for_connection_state(self, timeout_s=20.0):
+        """Wait until MAVSDK reports a connected vehicle, with a timeout."""
+        deadline = asyncio.get_running_loop().time() + float(timeout_s)
+        async for state in self.drone.core.connection_state():
+            if state.is_connected:
+                return state
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+        raise TimeoutError(f"Timed out waiting for MAVSDK connection on {self.connection_string}")
+
+    async def _wait_for_local_position_estimate(self, timeout_s=30.0):
+        """Wait until PX4 publishes a usable local position estimate."""
+        deadline = asyncio.get_running_loop().time() + float(timeout_s)
+        async for health in self.drone.telemetry.health():
+            if health.is_local_position_ok:
+                return health
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+        raise TimeoutError("Timed out waiting for local position estimate from PX4")
         
     async def connect(self):
         """Connect to the drone"""
         print(f"Connecting to drone at {self.connection_string}...")
         await self.drone.connect(system_address=self.connection_string)
-        
-        async for state in self.drone.core.connection_state():
-            if state.is_connected:
-                print("✅ Connected to drone")
-                break
-        
+
+        await self._wait_for_connection_state(timeout_s=20.0)
+        print("✅ Connected to drone")
+
         # Wait for position estimate
         print("Waiting for position estimate...")
-        async for health in self.drone.telemetry.health():
-            if health.is_local_position_ok:
-                print("✅ Position estimate OK")
-                break
+        await self._wait_for_local_position_estimate(timeout_s=30.0)
+        print("✅ Position estimate OK")
     
     async def preflight_checks(self):
         """Perform preflight checks"""
         print("\n🔍 Preflight Checks:")
-        
-        async for health in self.drone.telemetry.health():
-            print(f"  GPS: {'✅' if health.is_global_position_ok else '❌'}")
-            print(f"  Gyro: {'✅' if health.is_gyrometer_calibration_ok else '❌'}")
-            print(f"  Accel: {'✅' if health.is_accelerometer_calibration_ok else '❌'}")
-            print(f"  Mag: {'✅' if health.is_magnetometer_calibration_ok else '❌'}")
-            print(f"  Local Pos: {'✅' if health.is_local_position_ok else '❌'}")
-            print(f"  Home Pos: {'✅' if health.is_home_position_ok else '❌'}")
-            
-            if health.is_local_position_ok and health.is_gyrometer_calibration_ok:
-                return True
-            break
-        
-        return False
+
+        try:
+            health = await asyncio.wait_for(anext(self.drone.telemetry.health()), timeout=10.0)
+        except TimeoutError:
+            print("  ⚠️ Timed out waiting for telemetry.health() during preflight")
+            return False
+
+        print(f"  GPS: {'✅' if health.is_global_position_ok else '❌'}")
+        print(f"  Gyro: {'✅' if health.is_gyrometer_calibration_ok else '❌'}")
+        print(f"  Accel: {'✅' if health.is_accelerometer_calibration_ok else '❌'}")
+        print(f"  Mag: {'✅' if health.is_magnetometer_calibration_ok else '❌'}")
+        print(f"  Local Pos: {'✅' if health.is_local_position_ok else '❌'}")
+        print(f"  Home Pos: {'✅' if health.is_home_position_ok else '❌'}")
+
+        return health.is_local_position_ok and health.is_gyrometer_calibration_ok
 
     async def get_flight_mode(self):
         """Return the current PX4 flight mode."""
@@ -216,6 +237,7 @@ class MissionExecutor:
                     VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
                 )
                 await asyncio.sleep(0.1)
+                print(f"  Sending OFFBOARD start request (attempt {attempt}/{max_attempts})")
                 await self.drone.offboard.start()
                 print("  ✅ Offboard mode enabled")
                 self.mission_state = "OFFBOARD"

@@ -228,6 +228,9 @@ def ros_wrapped(command: str) -> str:
     - ROS Humble sourced
     - this px4_ws sourced
     - ROS_LOG_DIR set to /tmp/roslog
+    - PYTHONUNBUFFERED=1 so Python print() calls stream immediately through the
+      launcher instead of sitting in a stdio buffer while we wait on readiness
+      markers
     """
     return (
         # Do NOT use `set -u` here. ROS setup scripts may reference optional
@@ -240,6 +243,7 @@ def ros_wrapped(command: str) -> str:
         "source install/setup.bash\n"
         "mkdir -p /tmp/roslog\n"
         "export ROS_LOG_DIR=/tmp/roslog\n"
+        "export PYTHONUNBUFFERED=1\n"
         f"{command}\n"
     )
 
