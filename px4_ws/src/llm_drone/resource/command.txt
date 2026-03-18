@@ -104,3 +104,17 @@ tmux new-session -d -s llm_dataset "bash -lc '
 ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob '*.sdf' --skip-existing-csv --continue-on-error 2>&1 | tee /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs/overnight_batch.log
 
 ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob 'run6.sdf' --enable-gui
+
+
+##tensorboard
+tensorboard --logdir /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/scripts/drone_planner_checkpoints/logs
+
+###test standard qwen minimal gpu
+
+cd /home/prachit2/vlm-conformal/px4_ws/src/llm_drone
+python3 scripts/start_llm_planner_stack.py --model 'Qwen/Qwen2.5-1.5B-Instruct' --served-model-name 'Qwen/Qwen2.5-1.5B-Instruct' --dtype auto --gpu-memory-utilization 0.1  --max-model-len 4096
+
+
+###a custom model saved elsewhere
+cd /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone
+python3 scripts/start_llm_planner_stack.py --model /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/scripts/drone_planner_checkpoints_trial1k/final_merged --served-model-name qwen25_7b_drone_planner_1k

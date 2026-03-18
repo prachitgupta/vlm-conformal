@@ -47,7 +47,7 @@ DEFAULT_API_KEY = "token-abc123"
 # large enough for the current llm_prompt2d.txt + environment text + JSON reply.
 # You can raise this later if prompts grow, but using a much larger value than
 # needed increases KV-cache memory pressure on the vLLM server.
-DEFAULT_MAX_MODEL_LEN = 2048
+DEFAULT_MAX_MODEL_LEN = 4096
 
 
 def parse_args() -> argparse.Namespace:
