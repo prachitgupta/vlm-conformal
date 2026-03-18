@@ -43,6 +43,7 @@ DEFAULT_SERVED_MODEL_NAME = "qwen25_7b_drone_planner"
 DEFAULT_VLLM_PORT = 8000
 DEFAULT_VLLM_HOST = "127.0.0.1"
 DEFAULT_API_KEY = "token-abc123"
+DEFAULT_MASTER_READY_MARKER = "Opening Terminal 3: MicroXRCEAgent"
 # 2048 matches the training-time sequence budget in scripts/train.py and is
 # large enough for the current llm_prompt2d.txt + environment text + JSON reply.
 # You can raise this later if prompts grow, but using a much larger value than
@@ -64,6 +65,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mission-timeout-s", type=float, default=240.0)
     parser.add_argument("--vllm-timeout-s", type=float, default=300.0)
     parser.add_argument("--shutdown-timeout-s", type=float, default=8.0)
+    parser.add_argument(
+        "--master-ready-marker",
+        default=DEFAULT_MASTER_READY_MARKER,
+        help=(
+            "Log line from the master launcher that indicates PX4/Gazebo is far "
+            "enough along to start mission_executor. The default matches the "
+            "current launch_obstacle_avoidance_full_stack.sh output."
+        ),
+    )
+    parser.add_argument("--master-ready-timeout-s", type=float, default=120.0)
+    parser.add_argument(
+        "--master-post-ready-delay-s",
+        type=float,
+        default=4.0,
+        help="Extra settle time after the master ready marker before mission_executor starts.",
+    )
     parser.add_argument("--cuda-visible-devices", default="1")
     parser.add_argument("--vllm-host", default=DEFAULT_VLLM_HOST)
     parser.add_argument("--vllm-port", type=int, default=DEFAULT_VLLM_PORT)
@@ -184,12 +201,30 @@ def ros_wrapped(command: str) -> str:
     - ROS_LOG_DIR set to /tmp/roslog
     """
     return (
-        "set -euo pipefail\n"
+        # Do NOT use `set -u` here. ROS setup scripts may reference optional
+        # environment variables before assigning them, which causes immediate
+        # failure under nounset. We still keep `-e` and `pipefail` for useful
+        # error propagation.
+        "set -eo pipefail\n"
         "source /opt/ros/humble/setup.bash\n"
         f"cd {WORKSPACE_ROOT}\n"
         "source install/setup.bash\n"
         "mkdir -p /tmp/roslog\n"
         "export ROS_LOG_DIR=/tmp/roslog\n"
+        f"{command}\n"
+    )
+
+
+def workspace_wrapped(command: str) -> str:
+    """Run a shell command from the px4_ws root without forcing ROS sourcing.
+
+    The external PX4 full-stack launcher already handles its own environment,
+    sleeps, and terminal spawning. Wrapping it in ROS setup was unnecessary and
+    caused the `AMENT_TRACE_SETUP_FILES: unbound variable` failure on your server.
+    """
+    return (
+        "set -eo pipefail\n"
+        f"cd {WORKSPACE_ROOT}\n"
         f"{command}\n"
     )
 
@@ -236,9 +271,11 @@ def main() -> int:
 
     # 1) Master process: your existing PX4/Gazebo full-stack launcher.
     #    This is the main integration point with your local sim setup.
+    #    We intentionally do NOT ROS-wrap this anymore because the script already
+    #    manages its own startup environment.
     master = ManagedProcess(
         name="master",
-        cmd=ros_wrapped(args.master_command),
+        cmd=workspace_wrapped(args.master_command),
     )
     # 2) Mission executor: arms, takes off, and holds OFFBOARD until the planner
     #    starts publishing setpoints.
@@ -284,9 +321,22 @@ def main() -> int:
         print(f"[startup] master command: {args.master_command}", flush=True)
         print(f"[startup] vLLM model spec: {model_spec}", flush=True)
         master.start()
-        # Small head start so the simulator stack can begin booting before the
-        # mission executor tries to connect to MAVSDK / PX4.
-        time.sleep(2.0)
+
+        # Do not start mission_executor immediately. Wait until the master
+        # launcher prints a known progress marker that indicates Gazebo is up and
+        # the script has reached the MicroXRCEAgent stage. This mirrors the
+        # intent of offline_dataset_batch_runner's ordered launcher startup.
+        print(
+            f"[startup] waiting for master readiness marker: {args.master_ready_marker}",
+            flush=True,
+        )
+        master.wait_for_output(args.master_ready_marker, timeout_s=args.master_ready_timeout_s)
+        if args.master_post_ready_delay_s > 0.0:
+            print(
+                f"[startup] master marker seen; settling for {args.master_post_ready_delay_s:.1f}s",
+                flush=True,
+            )
+            time.sleep(args.master_post_ready_delay_s)
 
         print("[startup] launching mission_executor and vLLM in parallel", flush=True)
         mission.start()
