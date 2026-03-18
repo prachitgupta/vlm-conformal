@@ -51,7 +51,7 @@ DEFAULT_MASTER_READY_MARKER = "Opening Terminal 3: MicroXRCEAgent"
 DEFAULT_ODOM_TOPIC = "/fmu/out/vehicle_odometry"
 DEFAULT_MISSION_UDP_PORT = 14540
 DEFAULT_GOAL_FRAME = "gazebo"
-DEFAULT_GOAL_X = 29
+DEFAULT_GOAL_X = 29.0
 DEFAULT_GOAL_Y = 0.0
 DEFAULT_GOAL_Z = 2.5
 # 2048 matches the training-time sequence budget in scripts/train.py and is
