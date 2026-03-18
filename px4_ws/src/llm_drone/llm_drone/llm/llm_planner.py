@@ -35,6 +35,10 @@ import os
 import urllib.request
 import urllib.error
 from llm_drone.verifier.cli_goal import parse_goal_overrides
+from llm_drone.llm.dataset_pipeline_common import (
+    PROMPT_MODE_ENV_NL_ONLY,
+    build_prompt_from_scene,
+)
 from llm_drone.llm.llm_prompt_common import (
     DEPTH_HFOV_DEG,
     DEPTH_VFOV_DEG,
@@ -42,12 +46,11 @@ from llm_drone.llm.llm_prompt_common import (
     DEPTH_MAX_M,
     OBS_FIFO_LEN,
     MPC_DEPTH_SAMPLE_COUNT,
-    LLM_PLANNER_PROMPT_FILENAME,
+    DATASET_PROMPT_FILENAME,
     DEFAULT_SYSTEM_PROMPT,
     build_environment_vector,
     load_system_prompt,
     resolve_prompt_file,
-    translate_vector_to_nlp,
 )
 
 try:
@@ -185,7 +188,7 @@ class LLMTrajectoryPlanner(Node):
         
         # Load prompt from file
         prompt_file = self._resolve_prompt_file()
-        self.system_prompt = load_system_prompt(LLM_PLANNER_PROMPT_FILENAME)
+        self.system_prompt = load_system_prompt(DATASET_PROMPT_FILENAME)
         if not prompt_file.exists():
             self.get_logger().warn(f'Prompt file not found: {prompt_file}')
         
@@ -207,6 +210,8 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('goal_frame', 'ned')  # gazebo(ENU) or ned
         self.declare_parameter('depth_obstacle_samples', MPC_DEPTH_SAMPLE_COUNT)
         self.declare_parameter('max_velocity_mps', 15.0)
+        self.declare_parameter('waypoint_acceptance_radius_m', 0.5)
+        self.declare_parameter('use_legacy_goto_execution', False)
         
         goal_input = np.array([
             self.get_parameter('goal_x').value,
@@ -236,6 +241,7 @@ class LLMTrajectoryPlanner(Node):
         self.llm_trajectory = []
         self.mpc_trajectory = []
         self.pending_waypoints = deque()
+        self.active_waypoint = None
         
         # Subscribers
         if HAS_PX4_MSGS:
@@ -316,7 +322,7 @@ class LLMTrajectoryPlanner(Node):
 
     def _resolve_prompt_file(self):
         """Resolve prompt path for both source and installed package layouts."""
-        return resolve_prompt_file(LLM_PLANNER_PROMPT_FILENAME)
+        return resolve_prompt_file(DATASET_PROMPT_FILENAME)
     
     def _load_openai_key(self):
         api_key = os.getenv('OPENAI_API_KEY')
@@ -488,6 +494,105 @@ class LLMTrajectoryPlanner(Node):
         self.last_environment_vector = vector
         return vector
 
+    def build_live_prompt(self):
+        """Build the exact user prompt contract used in dataset generation/training."""
+        scene = {
+            'position': np.asarray(self.current_position, dtype=float),
+            'velocity': np.asarray(self.current_velocity, dtype=float),
+            'depth_image': self.depth_image,
+            'latest_depth_obstacles_ned': self.latest_depth_obstacles_ned,
+            'local_obstacle_snapshot': self.local_obstacle_map.snapshot(),
+        }
+        prompt_text, env_vector, env_text = build_prompt_from_scene(
+            goal_ned=np.asarray(self.goal, dtype=float),
+            scene=scene,
+            system_prompt=self.system_prompt,
+            prompt_mode=PROMPT_MODE_ENV_NL_ONLY,
+            waypoint_count=LLM_WAYPOINT_COUNT,
+            depth_sample_count=int(self.depth_to_obstacles.n_sample),
+        )
+        if prompt_text is None or env_vector is None or env_text is None:
+            raise RuntimeError('Failed to build live prompt from current scene')
+        self.last_environment_vector = env_vector
+        return prompt_text.strip(), env_vector, env_text
+
+    def _publish_debug_target_waypoint(self, target_position):
+        """Publish the currently active LLM waypoint for visualization/debugging."""
+        next_position = np.asarray(target_position, dtype=float)
+        self.llm_trajectory.append(next_position)
+        traj_msg = PoseStamped()
+        traj_msg.header.stamp = self.get_clock().now().to_msg()
+        traj_msg.header.frame_id = 'ned'
+        traj_msg.pose.position.x = float(next_position[0])
+        traj_msg.pose.position.y = float(next_position[1])
+        traj_msg.pose.position.z = float(next_position[2])
+        traj_msg.pose.orientation.w = 1.0
+        self.llm_traj_pub.publish(traj_msg)
+
+    def _target_reached(self, target_position):
+        """Match dataset replay semantics: hold each waypoint until the drone reaches it."""
+        target = np.asarray(target_position, dtype=float)
+        xy_error = float(np.linalg.norm(
+            np.asarray(target[:2], dtype=float) - np.asarray(self.current_position[:2], dtype=float)
+        ))
+        z_error = abs(float(target[2] - self.current_position[2]))
+        acceptance_radius = float(self.get_parameter('waypoint_acceptance_radius_m').value)
+        return xy_error <= acceptance_radius and z_error <= 0.50
+
+    def _load_waypoint_rollout_if_needed(self):
+        if self.pending_waypoints or self.active_waypoint is not None:
+            return
+        llm_waypoints = self.query_llm()
+        if not llm_waypoints:
+            return
+        self.pending_waypoints.extend(llm_waypoints)
+        self.publish_llm_trajectory_sequence(
+            llm_waypoints,
+            self.get_clock().now().to_msg(),
+        )
+        self.get_logger().info(
+            f'Loaded {len(llm_waypoints)}-waypoint LLM rollout for execution'
+        )
+
+    def _execute_pose_tracking_rollout(self):
+        self._load_waypoint_rollout_if_needed()
+        if self.active_waypoint is not None and self._target_reached(self.active_waypoint):
+            reached = np.asarray(self.active_waypoint, dtype=float)
+            self.get_logger().info(
+                'Reached active LLM waypoint '
+                f'({reached[0]:.2f}, {reached[1]:.2f}, {reached[2]:.2f})'
+            )
+            self.active_waypoint = None
+
+        if self.active_waypoint is None and self.pending_waypoints:
+            self.active_waypoint = np.array(self.pending_waypoints.popleft(), dtype=float, copy=True)
+            self._publish_debug_target_waypoint(self.active_waypoint)
+            self.get_logger().info(
+                'Tracking new LLM waypoint '
+                f'({self.active_waypoint[0]:.2f}, {self.active_waypoint[1]:.2f}, {self.active_waypoint[2]:.2f})'
+            )
+
+        if self.active_waypoint is None:
+            return
+
+        if HAS_PX4_MSGS:
+            self.publish_trajectory_setpoint(self.active_waypoint)
+        else:
+            velocity = self.compute_velocity_command(self.active_waypoint)
+            self.publish_velocity(velocity)
+
+    def _execute_legacy_goto_rollout(self):
+        self._load_waypoint_rollout_if_needed()
+        if not self.pending_waypoints:
+            return
+        next_position = np.array(self.pending_waypoints.popleft(), dtype=float, copy=True)
+        self._publish_debug_target_waypoint(next_position)
+        if HAS_PX4_MSGS:
+            self.publish_trajectory_setpoint(next_position)
+        else:
+            velocity = self.compute_velocity_command(next_position)
+            self.publish_velocity(velocity)
+    
     def plan_trajectory(self):
         """Execute a queued LLM rollout, or query a fresh 5-waypoint rollout when empty."""
         
@@ -504,40 +609,10 @@ class LLMTrajectoryPlanner(Node):
             return
         
         try:
-            if not self.pending_waypoints:
-                llm_waypoints = self.query_llm()
-                if llm_waypoints:
-                    self.pending_waypoints.extend(llm_waypoints)
-                    self.publish_llm_trajectory_sequence(
-                        llm_waypoints,
-                        self.get_clock().now().to_msg(),
-                    )
-                    self.get_logger().info(
-                        f'Loaded {len(llm_waypoints)}-waypoint LLM rollout for execution'
-                    )
-
-            if not self.pending_waypoints:
-                return
-
-            next_position = np.array(self.pending_waypoints.popleft(), dtype=float, copy=True)
-            self.llm_trajectory.append(next_position)
-
-            now_ros = self.get_clock().now()
-            stamp_msg = now_ros.to_msg()
-            traj_msg = PoseStamped()
-            traj_msg.header.stamp = stamp_msg
-            traj_msg.header.frame_id = 'ned'
-            traj_msg.pose.position.x = next_position[0]
-            traj_msg.pose.position.y = next_position[1]
-            traj_msg.pose.position.z = next_position[2]
-            traj_msg.pose.orientation.w = 1.0
-            self.llm_traj_pub.publish(traj_msg)
-
-            if HAS_PX4_MSGS:
-                self.publish_trajectory_setpoint(next_position)
+            if bool(self.get_parameter('use_legacy_goto_execution').value):
+                self._execute_legacy_goto_rollout()
             else:
-                velocity = self.compute_velocity_command(next_position)
-                self.publish_velocity(velocity)
+                self._execute_pose_tracking_rollout()
 
             if len(self.mpc_trajectory) > 0:
                 error = self.compute_trajectory_error()
@@ -565,12 +640,7 @@ class LLMTrajectoryPlanner(Node):
 
     def query_llm(self):
         """Query the configured LLM backend and enforce the configured waypoint schema."""
-        
-        env_vector = self.build_environment_vector()
-        env_text = translate_vector_to_nlp(env_vector)
-
-        # Keep inference aligned with dataset/training: NLV-only user prompt, no explicit env vector dump.
-        user_message = env_text.strip()
+        user_message, env_vector, env_text = self.build_live_prompt()
 
         provider = str(self.get_parameter('llm_provider').value).strip().lower()
         if provider == 'openai':
