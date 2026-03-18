@@ -100,13 +100,19 @@ class MissionExecutor:
             await asyncio.sleep(0.2)
         return await self.get_in_air()
 
-    async def wait_until_altitude(self, target_altitude_m, timeout_s=25.0):
-        """Wait until the vehicle reaches the requested relative altitude."""
+    async def wait_until_altitude(self, target_altitude_m, timeout_s=25.0, altitude_tolerance_m=0.35):
+        """Wait until the vehicle reaches the requested relative altitude.
+
+        In SITL the reported relative altitude often settles slightly below the
+        requested takeoff altitude, so we accept a small absolute shortfall
+        instead of requiring a strict percentage of the target.
+        """
         deadline = asyncio.get_running_loop().time() + float(timeout_s)
         last_altitude_m = await self.get_relative_altitude_m()
+        required_altitude_m = max(0.0, float(target_altitude_m) - float(altitude_tolerance_m))
         while asyncio.get_running_loop().time() < deadline:
             last_altitude_m = await self.get_relative_altitude_m()
-            if last_altitude_m > float(target_altitude_m) * 0.95:
+            if last_altitude_m >= required_altitude_m:
                 return True, last_altitude_m
             await asyncio.sleep(0.2)
         return False, last_altitude_m
@@ -159,7 +165,7 @@ class MissionExecutor:
         if last_error is not None:
             raise last_error
     
-    async def arm_and_takeoff(self, altitude=1.5, takeoff_timeout_s=25.0):
+    async def arm_and_takeoff(self, altitude=1.5, takeoff_timeout_s=25.0, altitude_tolerance_m=0.35):
         """Arm and takeoff, failing fast if the climb never starts/finishes."""
         print(f"\n🚁 Arming and taking off to {altitude}m...")
         
@@ -181,14 +187,20 @@ class MissionExecutor:
         altitude_reached, latest_altitude_m = await self.wait_until_altitude(
             altitude,
             timeout_s=float(takeoff_timeout_s),
+            altitude_tolerance_m=float(altitude_tolerance_m),
         )
         if not altitude_reached:
+            required_altitude_m = max(0.0, float(altitude) - float(altitude_tolerance_m))
             raise RuntimeError(
                 f"Takeoff timed out before reaching altitude {float(altitude):.2f}m "
-                f"(latest={latest_altitude_m:.2f}m)"
+                f"(required={required_altitude_m:.2f}m latest={latest_altitude_m:.2f}m)"
             )
 
-        print(f"  ✅ Reached altitude: {latest_altitude_m:.2f}m")
+        print(
+            "  ✅ Reached takeoff altitude window: "
+            f"{latest_altitude_m:.2f}m "
+            f"(target={float(altitude):.2f}m tolerance={float(altitude_tolerance_m):.2f}m)"
+        )
         self.mission_state = "HOVERING"
         
         # Extra stabilization time
@@ -256,13 +268,18 @@ class MissionExecutor:
         altitude=2.5,
         setup_attempts=4,
         takeoff_timeout_s=25.0,
+        altitude_tolerance_m=0.35,
     ):
         """Retry the full arm/takeoff/offboard sequence before giving up."""
         last_error = None
         for attempt in range(1, int(setup_attempts) + 1):
             print(f"\n🔁 Setup attempt {attempt}/{setup_attempts}")
             try:
-                await self.arm_and_takeoff(altitude=altitude, takeoff_timeout_s=takeoff_timeout_s)
+                await self.arm_and_takeoff(
+                    altitude=altitude,
+                    takeoff_timeout_s=takeoff_timeout_s,
+                    altitude_tolerance_m=altitude_tolerance_m,
+                )
                 if not await self.enable_offboard_mode():
                     raise RuntimeError("Offboard start failed after retries")
                 return
