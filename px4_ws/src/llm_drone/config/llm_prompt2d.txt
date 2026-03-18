@@ -31,54 +31,52 @@ Planning objective priority:
 SECTION 2: FEW-SHOT DEMONSTRATIONS
 Example A (clear corridor):
 Input summary:
-- current_position: [0.0, 0.0, -2.0]
-- goal_position: [10.0, 0.0, -2.0]
-- obstacle cue: clear ahead
+- current_position: (-0.02, 0.01, -2.16) 
+- goal_position:  (0.00, 29.00, -2.50) 
+- obstacle cue: Nearest obstacle sector is center at 4.02 m and clearance status is clear.
 Output:
 {
-  "waypoints": [
-    {"x": 1.2, "y": 0.0},
-    {"x": 2.4, "y": 0.0},
-    {"x": 3.6, "y": 0.0},
-    {"x": 4.8, "y": 0.0},
-    {"x": 6.0, "y": 0.0}
-  ],
-  "reasoning": "Selected waypoint 0 moves the drone from 10.00 m to 8.80 m from goal immediately and to 4.00 m by the final waypoint, so progress is 1.20 m selected / 6.00 m final and passes with monotonic goal-distance reduction. Segment lengths [1.20, 1.20, 1.20, 1.20, 1.20] imply speeds [12.00, 12.00, 12.00, 12.00, 12.00] and accelerations [0.00, 0.00, 0.00, 0.00], giving max speed 12.00 m/s and max accel 0.00 m/s^2, so kinematics passes; smoothness kappa is 0.00 m with total turning 0.00 rad and max turn 0.0 deg. Safety passes: clearance could not be measured geometrically."
-}
+"waypoints":[
+{"x":0.19444444444444442,"y":0.4444444444444444},
+{"x":0.38888888888888884,"y":0.8888888888888888},
+{"x":0.5833333333333333,"y":1.3333333333333333},
+{"x":0.7777777777777777,"y":1.7777777777777777},
+{"x":0.9722222222222223,"y":2.2222222222222223}],
 
-Example B (obstacle ahead, bypass on right):
-Input summary:
-- current_position: [0.0, 0.0, -2.0]
-- goal_position: [10.0, 0.0, -2.0]
-- obstacle cue: near obstacle centered ahead, right side clearer
-Output:
-{
-  "waypoints": [
-    {"x": 1.0, "y": 0.8},
-    {"x": 2.0, "y": 1.5},
-    {"x": 3.1, "y": 2.0},
-    {"x": 4.3, "y": 1.8},
-    {"x": 5.4, "y": 1.1}
-  ],
-  "reasoning": "Selected waypoint 0 moves the drone from 10.00 m to 9.03 m from goal immediately and to 4.73 m by the final waypoint, so progress is 0.97 m selected / 5.27 m final and passes with monotonic goal-distance reduction. Segment lengths [1.28, 1.22, 1.21, 1.22, 1.30] imply speeds [12.81, 12.21, 12.08, 12.17, 12.04] and accelerations [5.96, 1.27, 0.84, 1.30], giving max speed 12.81 m/s and max accel 5.96 m/s^2, so kinematics passes; smoothness kappa is 0.28 m with total turning 1.49 rad and max turn 41.0 deg. Safety passes: clearance could not be measured geometrically."
-}
+"reasoning":"Selected waypoint 0 moves the reference anchor from 29.00 m to 28.56 m from goal immediately and to 26.80 m by the final waypoint, so progress is 0.44 m selected / 2.20 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.19 m against manifest obstacles with 0 violating segment(s)."}
 
-Example C (obstacle ahead, bypass on left):
+Example B (obstacle on right, move left):
 Input summary:
-- current_position: [0.0, 0.0, -2.0]
-- goal_position: [8.0, 0.0, -2.0]
-- obstacle cue: right side is crowded, left side is clearer
+- current_position: (0.51, 26.85, -2.48)
+- goal_position: (0.00, 29.00, -2.50)
+- obstacle cue:Nearest obstacle sector is right. left side is clearer.
 Output:
 {
-  "waypoints": [
-    {"x": 0.8, "y": -0.7},
-    {"x": 1.8, "y": -1.3},
-    {"x": 3.0, "y": -1.7},
-    {"x": 4.1, "y": -1.4},
-    {"x": 5.2, "y": -0.8}
+  "waypoints":[
+  {"x":0.5,"y":27.541666666666668},
+  {"x":0.5,"y":28.0},
+  {"x":0.33333333333333337,"y":28.333333333333332},
+  {"x":0.16666666666666669,"y":28.666666666666668},
+  {"x":0.0,"y":29.0}
   ],
-  "reasoning": "Selected waypoint 0 moves the drone from 8.00 m to 7.23 m from goal immediately and to 2.91 m by the final waypoint, so progress is 0.77 m selected / 5.09 m final and passes with monotonic goal-distance reduction. Segment lengths [1.06, 1.17, 1.26, 1.14, 1.25] imply speeds [10.63, 11.66, 12.65, 11.40, 12.53] and accelerations [10.29, 9.85, 12.56, 11.29], giving max speed 12.65 m/s and max accel 12.56 m/s^2, so kinematics fails; smoothness kappa is 0.34 m with total turning 1.52 rad and max turn 42.6 deg. Safety passes: clearance could not be measured geometrically."
-}
+  
+  "reasoning":"Selected waypoint 0 moves the reference anchor from 1.98 m to 1.54 m from goal immediately and to 0.00 m by the final waypoint, so progress is 0.44 m selected / 1.98 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics fails. Goal will be reached in 5 waypoint(s) within 0.35 m tolerance. Safety passes: minimum clearance 1.85 m against manifest obstacles with 0 violating segment(s)."}
+
+Example C (obstacle ahead, bypass on right):
+Input summary:
+- current_position: (1.92, 6.22, -2.49) 
+- goal_position: (0.72, 29.00, -2.50)
+- obstacle cue:  Nearest obstacle sector is center.Right side is clearer.
+{
+  "waypoints":[
+  {"x":1.9429403969735803,"y":5.968291468220664},
+  {"x":1.9353646393978228,"y":6.460715710644907},
+  {"x":1.9277888818220652,"y":6.953139953069149},
+  {"x":1.9202131242463076,"y":7.445564195493391},
+  {"x":1.91263736667055,"y":7.9379884379176335}
+  ],
+  
+  "reasoning":"Selected waypoint 0 moves the reference anchor from 23.55 m to 23.06 m from goal immediately and to 21.09 m by the final waypoint, so progress is 0.49 m selected / 2.46 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 1.77 m against manifest obstacles with 0 violating segment(s)."}
 
 SECTION 3: EXPECTED OUTPUT
 Return ONLY one valid JSON object. No markdown. No extra text.

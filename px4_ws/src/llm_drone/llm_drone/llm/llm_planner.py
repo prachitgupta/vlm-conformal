@@ -242,6 +242,9 @@ class LLMTrajectoryPlanner(Node):
         self.mpc_trajectory = []
         self.pending_waypoints = deque()
         self.active_waypoint = None
+        self.rollout_counter = 0
+        self.completed_waypoints_in_rollout = 0
+        self.active_waypoint_batch_index = None
         
         # Subscribers
         if HAS_PX4_MSGS:
@@ -288,6 +291,7 @@ class LLMTrajectoryPlanner(Node):
         # Timer for LLM queries
         update_period = 1.0 / self.get_parameter('update_rate').value
         self.timer = self.create_timer(update_period, self.plan_trajectory)
+        self.command_timer = self.create_timer(0.1, self.publish_active_command)
         if HAS_PX4_MSGS:
             self.offboard_timer = self.create_timer(0.1, self.publish_offboard_heartbeat)
         
@@ -542,44 +546,65 @@ class LLMTrajectoryPlanner(Node):
     def _load_waypoint_rollout_if_needed(self):
         if self.pending_waypoints or self.active_waypoint is not None:
             return
+        if self.rollout_counter > 0:
+            self.get_logger().info(
+                f'Completed rollout {self.rollout_counter} with {self.completed_waypoints_in_rollout}/{LLM_WAYPOINT_COUNT} waypoints reached. Querying next batch.'
+            )
         llm_waypoints = self.query_llm()
         if not llm_waypoints:
             return
+        self.rollout_counter += 1
+        self.completed_waypoints_in_rollout = 0
+        self.active_waypoint_batch_index = None
         self.pending_waypoints.extend(llm_waypoints)
         self.publish_llm_trajectory_sequence(
             llm_waypoints,
             self.get_clock().now().to_msg(),
         )
         self.get_logger().info(
-            f'Loaded {len(llm_waypoints)}-waypoint LLM rollout for execution'
+            f'Loaded rollout {self.rollout_counter} with {len(llm_waypoints)} waypoints for execution'
         )
 
     def _execute_pose_tracking_rollout(self):
         self._load_waypoint_rollout_if_needed()
         if self.active_waypoint is not None and self._target_reached(self.active_waypoint):
             reached = np.asarray(self.active_waypoint, dtype=float)
+            waypoint_idx = self.active_waypoint_batch_index
+            self.completed_waypoints_in_rollout += 1
             self.get_logger().info(
-                'Reached active LLM waypoint '
+                f'Reached rollout {self.rollout_counter} waypoint {waypoint_idx}/{LLM_WAYPOINT_COUNT} '
                 f'({reached[0]:.2f}, {reached[1]:.2f}, {reached[2]:.2f})'
             )
             self.active_waypoint = None
+            self.active_waypoint_batch_index = None
 
         if self.active_waypoint is None and self.pending_waypoints:
             self.active_waypoint = np.array(self.pending_waypoints.popleft(), dtype=float, copy=True)
+            self.active_waypoint_batch_index = self.completed_waypoints_in_rollout + 1
             self._publish_debug_target_waypoint(self.active_waypoint)
             self.get_logger().info(
-                'Tracking new LLM waypoint '
+                f'Tracking rollout {self.rollout_counter} waypoint '
+                f'{self.active_waypoint_batch_index}/{LLM_WAYPOINT_COUNT} '
                 f'({self.active_waypoint[0]:.2f}, {self.active_waypoint[1]:.2f}, {self.active_waypoint[2]:.2f})'
             )
+
+        if self.active_waypoint is None and not self.pending_waypoints:
+            self._load_waypoint_rollout_if_needed()
 
         if self.active_waypoint is None:
             return
 
-        if HAS_PX4_MSGS:
-            self.publish_trajectory_setpoint(self.active_waypoint)
-        else:
-            velocity = self.compute_velocity_command(self.active_waypoint)
-            self.publish_velocity(velocity)
+        target = np.asarray(self.active_waypoint, dtype=float)
+        xy_error = float(np.linalg.norm(target[:2] - np.asarray(self.current_position[:2], dtype=float)))
+        z_error = abs(float(target[2] - self.current_position[2]))
+        self.get_logger().info(
+            f'Waiting for drone to reach rollout {self.rollout_counter} waypoint '
+            f'{self.active_waypoint_batch_index}/{LLM_WAYPOINT_COUNT}: '
+            f'target=({target[0]:.2f}, {target[1]:.2f}, {target[2]:.2f}), '
+            f'current=({self.current_position[0]:.2f}, {self.current_position[1]:.2f}, {self.current_position[2]:.2f}), '
+            f'xy_error={xy_error:.2f}m, z_error={z_error:.2f}m',
+            throttle_duration_sec=1.0,
+        )
 
     def _execute_legacy_goto_rollout(self):
         self._load_waypoint_rollout_if_needed()
@@ -649,7 +674,7 @@ class LLMTrajectoryPlanner(Node):
             content = self.query_vllm_model(user_message)
         else:
             content = self.query_qwen_model(user_message)
-        self.get_logger().info(f'LLM response: {content}')
+        self.get_logger().info(f'Raw LLM response:\n{content}')
         
         # Extract JSON
         try:
@@ -891,6 +916,23 @@ class LLMTrajectoryPlanner(Node):
         msg.velocity = False
         msg.acceleration = False
         self.offboard_mode_pub.publish(msg)
+
+    def publish_active_command(self):
+        """Continuously stream the currently active waypoint/setpoint to PX4.
+
+        The planning timer runs slowly because it may block on an LLM request,
+        but PX4 OFFBOARD control behaves much better when the current setpoint is
+        refreshed at a steady rate. This timer decouples control streaming from
+        LLM query latency.
+        """
+        if self.active_waypoint is None:
+            return
+
+        if HAS_PX4_MSGS:
+            self.publish_trajectory_setpoint(self.active_waypoint)
+        else:
+            velocity = self.compute_velocity_command(self.active_waypoint)
+            self.publish_velocity(velocity)
 
     def publish_trajectory_setpoint(self, target_position):
         """Publish position setpoint directly to PX4 trajectory setpoint topic."""
