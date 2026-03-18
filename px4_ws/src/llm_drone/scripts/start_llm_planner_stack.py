@@ -51,6 +51,9 @@ DEFAULT_MASTER_READY_MARKER = "Opening Terminal 3: MicroXRCEAgent"
 DEFAULT_ODOM_TOPIC = "/fmu/out/vehicle_odometry"
 DEFAULT_MISSION_UDP_PORT = 14540
 DEFAULT_GOAL_FRAME = "gazebo"
+DEFAULT_GOAL_X = 29
+DEFAULT_GOAL_Y = 0.0
+DEFAULT_GOAL_Z = 2.5
 # 2048 matches the training-time sequence budget in scripts/train.py and is
 # large enough for the current llm_prompt2d.txt + environment text + JSON reply.
 # You can raise this later if prompts grow, but using a much larger value than
@@ -117,6 +120,18 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Goal frame passed to llm_planner. Use 'gazebo' for ENU world-frame goals "
             "in simulation, or 'ned' if you are already supplying NED coordinates."
+        ),
+    )
+    parser.add_argument("--goal-x", type=float, default=DEFAULT_GOAL_X)
+    parser.add_argument("--goal-y", type=float, default=DEFAULT_GOAL_Y)
+    parser.add_argument(
+        "--goal-z",
+        type=float,
+        default=DEFAULT_GOAL_Z,
+        help=(
+            "Goal altitude in the selected goal frame. With the default "
+            "--goal-frame gazebo, +2.3 becomes -2.3 in NED before querying the LLM "
+            "and before publishing PX4 setpoints."
         ),
     )
     parser.add_argument("--cuda-visible-devices", default="1")
@@ -409,6 +424,9 @@ def main() -> int:
         name="llm_planner",
         cmd=ros_wrapped(
             "ros2 run llm_drone llm --ros-args "
+            f"-p goal_x:={args.goal_x} "
+            f"-p goal_y:={args.goal_y} "
+            f"-p goal_z:={args.goal_z} "
             f"-p goal_frame:={args.goal_frame} "
             f"-p llm_provider:=vllm "
             f"-p vllm_url:={vllm_url} "
