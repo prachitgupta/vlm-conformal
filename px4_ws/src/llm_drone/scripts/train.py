@@ -50,6 +50,7 @@ import json
 import os
 import logging
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -703,6 +704,20 @@ def find_latest_checkpoint(output_dir: str | os.PathLike[str]) -> Path | None:
     return candidates[-1][1]
 
 
+def prepare_output_dirs(output_dir: str | os.PathLike[str]) -> tuple[Path, Path, Path, Path]:
+    """Create the directories used for logs and final save artifacts."""
+    root = Path(output_dir).expanduser().resolve()
+    logs_dir = root / "logs"
+    final_dir = root / "final_adapter"
+    merged_dir = root / "final_merged"
+
+    root.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    final_dir.mkdir(parents=True, exist_ok=True)
+    merged_dir.mkdir(parents=True, exist_ok=True)
+    return root, logs_dir, final_dir, merged_dir
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 8: EVALUATION CALLBACKS
 #
@@ -839,14 +854,18 @@ def main():
 
     # 4. Build training arguments
     training_args = build_training_args(cfg, tokenizer, len(train_dataset))
-    output_dir = Path(cfg.output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir, logs_dir, final_dir_path, merged_dir_path = prepare_output_dirs(cfg.output_dir)
+    disk_usage = shutil.disk_usage(output_dir)
+    free_gib = disk_usage.free / (1024 ** 3)
     log.info(
         "EOS alignment: tokenizer.eos_token=%r eos_id=%r training_args.eos_token=%r",
         tokenizer.eos_token,
         tokenizer.eos_token_id,
         getattr(training_args, "eos_token", None),
     )
+    log.info("Training output root: %s", output_dir)
+    log.info("TensorBoard log dir: %s", logs_dir)
+    log.info("Free disk at output root: %.1f GiB", free_gib)
 
     # 5. Build custom evaluation callback
     eval_callback = WaypointEvalCallback(
@@ -891,8 +910,8 @@ def main():
     log.info(f"  Epochs          : {cfg.num_train_epochs}")
     log.info(f"  Effective batch : {cfg.per_device_train_batch_size * cfg.gradient_accumulation_steps} per GPU")
     log.info(f"  Learning rate   : {cfg.learning_rate}")
-    log.info(f"  Checkpoints at  : {cfg.output_dir}")
-    log.info(f"  TensorBoard logs: {Path(cfg.output_dir).expanduser().resolve() / 'logs'}")
+    log.info(f"  Checkpoints at  : {output_dir}")
+    log.info(f"  TensorBoard logs: {logs_dir}")
 
     resume_checkpoint = find_latest_checkpoint(cfg.output_dir)
     if resume_checkpoint is not None:
@@ -907,7 +926,8 @@ def main():
         )
         training_completed = True
     except KeyboardInterrupt:
-        interrupt_dir = os.path.join(cfg.output_dir, "interrupted_adapter")
+        interrupt_dir = output_dir / "interrupted_adapter"
+        interrupt_dir.mkdir(parents=True, exist_ok=True)
         log.warning("Training interrupted by user. Saving current adapter snapshot to: %s", interrupt_dir)
         model.save_pretrained(interrupt_dir)
         tokenizer.save_pretrained(interrupt_dir)
@@ -922,17 +942,15 @@ def main():
 
     # 9. Save final model
     log.info("Training complete. Saving final model...")
-    final_dir = os.path.join(cfg.output_dir, "final_adapter")
-    model.save_pretrained(final_dir)
-    tokenizer.save_pretrained(final_dir)
-    log.info(f"LoRA adapter saved to: {final_dir}")
+    model.save_pretrained(final_dir_path)
+    tokenizer.save_pretrained(final_dir_path)
+    log.info(f"LoRA adapter saved to: {final_dir_path}")
 
     # 10. Optionally merge LoRA weights into base model
     # This creates a single standalone model (no adapter overhead at inference)
-    merged_dir = os.path.join(cfg.output_dir, "final_merged")
-    log.info(f"Merging LoRA into base model → {merged_dir}")
+    log.info(f"Merging LoRA into base model → {merged_dir_path}")
     model.save_pretrained_merged(
-        merged_dir,
+        merged_dir_path,
         tokenizer,
         save_method="merged_16bit",
         # WHY MERGED: At inference time, a merged model has zero LoRA overhead.
@@ -940,7 +958,7 @@ def main():
         # For a drone real-time system where latency matters, always use merged.
     )
     log.info("Done! Merged model ready for inference.")
-    log.info(f"To run inference: load model from {merged_dir}")
+    log.info(f"To run inference: load model from {merged_dir_path}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
