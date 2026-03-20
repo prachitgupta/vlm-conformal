@@ -186,7 +186,7 @@ class MissionExecutor:
         if last_error is not None:
             raise last_error
     
-    async def arm_and_takeoff(self, altitude=1.5, takeoff_timeout_s=25.0, altitude_tolerance_m=0.35):
+    async def arm_and_takeoff(self, altitude=1.5, takeoff_timeout_s=35.0, altitude_tolerance_m=0.5):
         """Arm and takeoff, failing fast if the climb never starts/finishes."""
         print(f"\n🚁 Arming and taking off to {altitude}m...")
         
