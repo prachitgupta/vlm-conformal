@@ -289,8 +289,8 @@ class MissionExecutor:
         *,
         altitude=2.5,
         setup_attempts=4,
-        takeoff_timeout_s=25.0,
-        altitude_tolerance_m=0.35,
+        takeoff_timeout_s=35.0,
+        altitude_tolerance_m=0.5,
     ):
         """Retry the full arm/takeoff/offboard sequence before giving up."""
         last_error = None
