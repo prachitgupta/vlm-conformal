@@ -42,7 +42,7 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MASTER_COMMAND = str(
     (Path.home() / "PX4-Autopilot" / "Tools" / "simulation" / "gz" / "launch_obstacle_avoidance_full_stack.sh").resolve()
 )
-DEFAULT_MODEL_SPEC = str(REPO_ROOT / "models" / "drone_planner_checkpoints" / "final_merged")
+DEFAULT_MODEL_SPEC = str(REPO_ROOT / "models" / "drone_planner_checkpoints12k" / "final_merged")
 DEFAULT_SERVED_MODEL_NAME = "qwen25_7b_drone_planner"
 DEFAULT_VLLM_PORT = 8000
 DEFAULT_VLLM_HOST = "127.0.0.1"

@@ -22,27 +22,19 @@ DEFAULT_ENV_PROMPT = """Environment section (T(v)):
 - Lateral planning hint: prefer center progress."""
 
 
-def variant_requires_reasoning(system_prompt: str) -> bool:
-    probe = system_prompt.lower()
-    return '"reasoning"' in probe or 'canonical reasoning template' in probe or 'reasoning' in probe
-
-
-def adapt_env_prompt(env_prompt: str, include_reasoning: bool) -> str:
-    suffix = (
-        "\n- Response requirement: include both `waypoints` and `reasoning` keys in JSON output."
-        if include_reasoning
-        else "\n- Response requirement: output only `waypoints` (no `reasoning` key)."
-    )
-    return env_prompt.strip() + suffix
+def build_messages(system_prompt: str, env_prompt: str) -> list[dict[str, str]]:
+    # Mirror train.py inference structure exactly: system prompt stays in the
+    # system turn, and the environment prompt is the lone user turn.
+    return [
+        {"role": "system", "content": system_prompt.strip()},
+        {"role": "user", "content": env_prompt.strip()},
+    ]
 
 
 def query_vllm(url: str, api_key: str, model: str, system_prompt: str, env_prompt: str, temperature: float, max_tokens: int) -> str:
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt + "\n\n" + env_prompt},
-            {"role": "user", "content": "Return only one valid JSON object."},
-        ],
+        "messages": build_messages(system_prompt, env_prompt),
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": False,
@@ -87,8 +79,7 @@ def main() -> None:
 
     for variant_path in variants:
         system_prompt = variant_path.read_text()
-        include_reasoning = variant_requires_reasoning(system_prompt)
-        env_prompt = adapt_env_prompt(DEFAULT_ENV_PROMPT, include_reasoning)
+        env_prompt = DEFAULT_ENV_PROMPT.strip()
 
         print(f"\n===== {variant_path.name} =====")
         response_text = query_vllm(
