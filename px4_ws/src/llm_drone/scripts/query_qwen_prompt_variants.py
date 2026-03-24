@@ -67,7 +67,7 @@ def main() -> None:
     parser.add_argument("--api-key", default="token-abc123")
     parser.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--temperature", type=float, default=0.1)
-    parser.add_argument("--max-tokens", type=int, default=4096)
+    parser.add_argument("--max-tokens", type=int, default=256)
     args = parser.parse_args()
 
     variants = sorted(args.variants_dir.glob("*.txt"))
