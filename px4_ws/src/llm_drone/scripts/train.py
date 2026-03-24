@@ -223,6 +223,10 @@ class TrainConfig:
 
 
 cfg = TrainConfig()
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DATA_PATH = Path(cfg.data_path).resolve()
+DEFAULT_PROMPT_PATH = resolve_prompt_file(DATASET_PROMPT_FILENAME) if "resolve_prompt_file" in globals() else (REPO_ROOT / "config" / DATASET_PROMPT_FILENAME).resolve()
+SELECTED_PROMPT_PATH = DEFAULT_PROMPT_PATH
 
 
 def parse_cli_args() -> argparse.Namespace:
@@ -239,21 +243,26 @@ def resolve_repo_relative_path(path_str: str) -> Path:
     candidate = Path(path_str).expanduser()
     if candidate.is_absolute():
         return candidate.resolve()
-    return (Path(__file__).resolve().parents[1] / candidate).resolve()
+    return (REPO_ROOT / candidate).resolve()
 
 
 def load_system_prompt_override(prompt_override: str | None) -> str:
+    global SELECTED_PROMPT_PATH
     if not prompt_override:
+        SELECTED_PROMPT_PATH = DEFAULT_PROMPT_PATH
         return load_system_prompt(DATASET_PROMPT_FILENAME)
     prompt_path = resolve_repo_relative_path(prompt_override)
     if not prompt_path.exists():
         raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
+    SELECTED_PROMPT_PATH = prompt_path
     return prompt_path.read_text()
 
 
 CLI_ARGS = parse_cli_args()
 if CLI_ARGS.data_path:
     cfg.data_path = str(resolve_repo_relative_path(CLI_ARGS.data_path))
+else:
+    cfg.data_path = str(DEFAULT_DATA_PATH)
 
 
 def _filter_supported_kwargs(callable_obj, kwargs: dict, alias_map: Optional[dict[str, list[str]]] = None) -> tuple[dict, dict]:
@@ -342,6 +351,8 @@ def prepare_generation_inputs(tokenizer, messages, device):
 # ─────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = load_system_prompt_override(CLI_ARGS.prompt_file)
+log.info("Using dataset file: %s", cfg.data_path)
+log.info("Using system prompt file: %s", SELECTED_PROMPT_PATH)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
