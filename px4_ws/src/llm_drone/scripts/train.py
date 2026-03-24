@@ -43,6 +43,7 @@
 #                  adapter injection into the model's attention layers.
 # ─────────────────────────────────────────────────────────────────────────────
 
+import argparse
 import csv
 import math
 import inspect
@@ -224,6 +225,37 @@ class TrainConfig:
 cfg = TrainConfig()
 
 
+def parse_cli_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train the llm_drone motion planner")
+    parser.add_argument("--data-path", default=None, help="Override training dataset path")
+    parser.add_argument("--prompt-file", default=None, help="Override system prompt file path")
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        log.warning("Ignoring unknown CLI args: %s", unknown)
+    return args
+
+
+def resolve_repo_relative_path(path_str: str) -> Path:
+    candidate = Path(path_str).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    return (Path(__file__).resolve().parents[1] / candidate).resolve()
+
+
+def load_system_prompt_override(prompt_override: str | None) -> str:
+    if not prompt_override:
+        return load_system_prompt(DATASET_PROMPT_FILENAME)
+    prompt_path = resolve_repo_relative_path(prompt_override)
+    if not prompt_path.exists():
+        raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
+    return prompt_path.read_text()
+
+
+CLI_ARGS = parse_cli_args()
+if CLI_ARGS.data_path:
+    cfg.data_path = str(resolve_repo_relative_path(CLI_ARGS.data_path))
+
+
 def _filter_supported_kwargs(callable_obj, kwargs: dict, alias_map: Optional[dict[str, list[str]]] = None) -> tuple[dict, dict]:
     """
     Keep only kwargs supported by the target callable and map renamed args
@@ -309,7 +341,7 @@ def prepare_generation_inputs(tokenizer, messages, device):
 # behave inconsistently at test time.
 # ─────────────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = load_system_prompt(DATASET_PROMPT_FILENAME)
+SYSTEM_PROMPT = load_system_prompt_override(CLI_ARGS.prompt_file)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
