@@ -49,6 +49,11 @@ DEFAULT_VLLM_PORT = 8000
 DEFAULT_VLLM_HOST = "127.0.0.1"
 DEFAULT_API_KEY = "token-abc123"
 DEFAULT_MASTER_READY_MARKER = "Opening Terminal 3: MicroXRCEAgent"
+DEFAULT_PX4_READY_TOPICS = (
+    "/fmu/out/timesync_status",
+    "/fmu/out/vehicle_status_v1",
+    "/fmu/out/vehicle_odometry",
+)
 DEFAULT_ODOM_TOPIC = "/fmu/out/vehicle_odometry"
 DEFAULT_MISSION_UDP_PORT = 14540
 DEFAULT_GOAL_FRAME = "gazebo"
@@ -93,15 +98,29 @@ def parse_args() -> argparse.Namespace:
         help="Extra settle time after the master ready marker before mission_executor starts.",
     )
     parser.add_argument(
+        "--px4-ready-topics",
+        default=",".join(DEFAULT_PX4_READY_TOPICS),
+        help=(
+            "Comma-separated PX4 ROS topics used as an early readiness gate before mission_executor. "
+            "The launcher waits until any one of them appears on the real ROS graph."
+        ),
+    )
+    parser.add_argument(
+        "--px4-ready-timeout-s",
+        type=float,
+        default=120.0,
+        help="How long to wait for an early PX4 ROS topic to appear before mission_executor is launched.",
+    )
+    parser.add_argument(
         "--odom-topic",
         default=DEFAULT_ODOM_TOPIC,
-        help="ROS topic that must produce at least one message before mission_executor is launched.",
+        help="ROS odometry topic that must produce a message before llm_planner is launched.",
     )
     parser.add_argument(
         "--odom-timeout-s",
         type=float,
         default=120.0,
-        help="How long to wait for the odometry topic to produce a message.",
+        help="How long to wait for the odometry topic to produce a message before llm_planner starts.",
     )
     parser.add_argument(
         "--mission-udp-port",
@@ -313,19 +332,56 @@ def wait_for_http_ready(url: str, timeout_s: float) -> None:
     raise TimeoutError(f"Timed out waiting for vLLM readiness at {url} ({last_error})")
 
 
-def wait_for_ros_topic_message(topic: str, timeout_s: float) -> None:
-    """Wait until a ROS topic produces at least one message.
+def parse_topic_csv(raw_topics: str) -> list[str]:
+    return [topic.strip() for topic in str(raw_topics).split(',') if topic.strip()]
 
-    We intentionally probe the real ROS graph here instead of trusting only the
-    master launcher's printouts. In practice this is the clearest signal that
-    PX4, the DDS path, and the ROS workspace are alive enough for
-    mission_executor to connect successfully.
-    """
+
+def wait_for_ros_topic_presence(topics: list[str], timeout_s: float) -> str:
+    """Wait until any requested ROS topic appears on the real ROS graph."""
+    if not topics:
+        raise ValueError('At least one PX4 readiness topic must be provided')
+
+    probe_cmd = ros_wrapped('ros2 topic list --no-daemon')
+    deadline = time.monotonic() + float(timeout_s)
+    last_error = ''
+    last_px4_topics: list[str] = []
+    while time.monotonic() < deadline:
+        probe = subprocess.run(
+            ["bash", "-lc", probe_cmd],
+            text=True,
+            capture_output=True,
+        )
+        if probe.returncode == 0:
+            seen_topics = {line.strip() for line in probe.stdout.splitlines() if line.strip()}
+            for topic in topics:
+                if topic in seen_topics:
+                    return topic
+            last_px4_topics = sorted(topic for topic in seen_topics if topic.startswith('/fmu/'))
+            last_error = ''
+        else:
+            last_error = (probe.stderr or probe.stdout or '').strip()
+        time.sleep(1.0)
+
+    if last_px4_topics:
+        preview = ', '.join(last_px4_topics[:10])
+        raise TimeoutError(
+            'Timed out waiting for PX4 ROS topics to appear. '
+            f'Wanted one of {topics!r}; last seen PX4 topics: {preview}'
+        )
+    raise TimeoutError(
+        'Timed out waiting for PX4 ROS topics to appear. '
+        f'Wanted one of {topics!r}; last error: {last_error or "no /fmu topics seen"}'
+    )
+
+
+def wait_for_ros_topic_message(topic: str, timeout_s: float) -> None:
+    """Wait until a ROS topic produces at least one message."""
     probe_cmd = ros_wrapped(
         f"timeout 5 ros2 topic echo --once {topic} >/tmp/start_llm_planner_stack_odom_probe.log 2>&1"
     )
     deadline = time.monotonic() + float(timeout_s)
     last_exit_code = None
+    last_probe_log = ''
     while time.monotonic() < deadline:
         probe = subprocess.run(
             ["bash", "-lc", probe_cmd],
@@ -336,10 +392,15 @@ def wait_for_ros_topic_message(topic: str, timeout_s: float) -> None:
         last_exit_code = probe.returncode
         if probe.returncode == 0:
             return
+        try:
+            last_probe_log = Path('/tmp/start_llm_planner_stack_odom_probe.log').read_text().strip()
+        except FileNotFoundError:
+            last_probe_log = ''
         time.sleep(1.0)
+    suffix = f'; last probe log: {last_probe_log}' if last_probe_log else ''
     raise TimeoutError(
         f"Timed out waiting for ROS topic {topic!r} to emit a message "
-        f"(last probe exit code {last_exit_code})"
+        f"(last probe exit code {last_exit_code}{suffix})"
     )
 
 
@@ -515,13 +576,22 @@ def main() -> int:
             )
             time.sleep(args.master_post_ready_delay_s)
 
-        # The next gate is stronger than a fixed sleep: do not touch
-        # mission_executor until ROS odometry is actually flowing.
+        px4_ready_topics = parse_topic_csv(args.px4_ready_topics)
+
+        # mission_executor talks to PX4 via MAVSDK rather than ROS, so the
+        # early gate only needs to prove that PX4 ROS outputs have started to
+        # appear. We keep the stricter odometry-message check for just before
+        # llm_planner launches.
         print(
-            f"[startup] waiting for odometry topic to produce data: {args.odom_topic}",
+            "[startup] waiting for PX4 ROS topics to appear: "
+            f"{', '.join(px4_ready_topics)}",
             flush=True,
         )
-        wait_for_ros_topic_message(args.odom_topic, timeout_s=args.odom_timeout_s)
+        matched_ready_topic = wait_for_ros_topic_presence(
+            px4_ready_topics,
+            timeout_s=args.px4_ready_timeout_s,
+        )
+        print(f"[startup] detected PX4 ROS topic: {matched_ready_topic}", flush=True)
 
         # Before we launch mission_executor, clean up any stale MAVSDK-side
         # processes from previous runs and make sure the UDP port it needs is
@@ -558,6 +628,12 @@ def main() -> int:
 
         print(f"[startup] waiting for vLLM health endpoint: {vllm_health_url}", flush=True)
         wait_for_http_ready(vllm_health_url, timeout_s=args.vllm_timeout_s)
+
+        print(
+            f"[startup] waiting for planner odometry topic to produce data: {args.odom_topic}",
+            flush=True,
+        )
+        wait_for_ros_topic_message(args.odom_topic, timeout_s=args.odom_timeout_s)
 
         print("[startup] mission + vLLM are ready; launching llm_planner", flush=True)
         planner.start()
