@@ -317,12 +317,11 @@ class MissionExecutor:
         raise RuntimeError("Vehicle setup failed before OFFBOARD readiness")
     
     async def wait_ready_for_mpc(self):
-        """Keep vehicle in offboard and wait for external MPC setpoints."""
+        """Signal OFFBOARD readiness and hand control back to the launcher."""
         print("\n✅ Drone is airborne and in OFFBOARD mode.")
         print("   MPC can now command waypoints/setpoints.")
-        print("   Press Ctrl+C to stop and land.\n")
-        while True:
-            await asyncio.sleep(1.0)
+        print("   Mission executor handoff is complete; exiting without landing.\n")
+        return
     
     async def return_and_land(self):
         """Return to launch and land"""

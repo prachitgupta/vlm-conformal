@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 import json
 from collections import deque
-from pathlib import Path
+from pathlib import Path as FilesystemPath
 try:
     from openai import OpenAI
 except ImportError:
@@ -333,7 +333,7 @@ class LLMTrajectoryPlanner(Node):
     def _resolve_prompt_file(self, prompt_file_override=None):
         """Resolve prompt path for both source and installed package layouts."""
         if prompt_file_override:
-            return Path(prompt_file_override).expanduser().resolve()
+            return FilesystemPath(prompt_file_override).expanduser().resolve()
         return resolve_prompt_file(DATASET_PROMPT_FILENAME)
     
     def _load_openai_key(self):
