@@ -236,13 +236,14 @@ class ManagedProcess:
     def wait_for_output(self, needle: str, timeout_s: float) -> None:
         # Used for mission_executor readiness. We purposely wait on a concrete
         # printed marker instead of a fixed sleep because PX4 startup timing can
-        # vary a lot from run to run.
+        # vary a lot from run to run. If the child prints the marker and exits
+        # immediately after, that still counts as success.
         deadline = time.monotonic() + float(timeout_s)
         while time.monotonic() < deadline:
-            if self.process is not None and self.process.poll() is not None:
-                raise RuntimeError(f"{self.name} exited early with code {self.process.returncode}")
             if self.has_line(needle):
                 return
+            if self.process is not None and self.process.poll() is not None:
+                raise RuntimeError(f"{self.name} exited early with code {self.process.returncode}")
             time.sleep(0.25)
         raise TimeoutError(f"Timed out waiting for {self.name} to emit: {needle!r}")
 
