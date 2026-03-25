@@ -44,8 +44,7 @@ Required schema (exact top-level keys):
     {"x": <float>, "y": <float>}
   ],}
 
-Canonical example format:
-{"waypoints":[{"x":0.19444444444444442,"y":0.4444444444444444},{"x":0.38888888888888884,"y":0.8888888888888888},{"x":0.5833333333333333,"y":1.3333333333333333},{"x":0.7777777777777777,"y":1.7777777777777777},{"x":0.9722222222222223,"y":2.2222222222222223}],"reasoning":"Selected waypoint 0 moves the reference anchor from 29.00 m to 28.56 m from goal immediately and to 26.80 m by the final waypoint, so progress is 0.44 m selected / 2.20 m final and passes with monotonic goal-distance reduction. Kinematics is evaluated on 5 unique label waypoint(s), excluding consecutive duplicate terminal holds, and checks only that the trajectory stays within the configured bounds speed <= 15.00 m/s and acceleration <= 8.00 m/s^2, so kinematics passes. Goal is not reached within this label waypoint window. Safety passes: minimum clearance 2.19 m against manifest obstacles with 0 violating segment(s)."}
+
 
 Schema rules:
 - "waypoints" must contain exactly 5 waypoint objects.

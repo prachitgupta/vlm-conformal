@@ -117,4 +117,97 @@ python3 scripts/start_llm_planner_stack.py --model 'Qwen/Qwen2.5-1.5B-Instruct' 
 
 ###a custom model saved elsewhere
 cd /home/prachit2/vlm-conformal/px4_ws/src/llm_drone
+python3 scripts/start_llm_planner_stack.py --model /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/scripts/drone_planner_checkpoints_trial1k/final_merged --served-model-name qwen25_7b_drone_planner1k --cuda-visible-devices 1 --dtype bfloat16 --gpu-memory-utilization 0.9 --max-model-len 2048
+
+
+cd /home/prachit2/vlm-conformal/px4_ws/src/llm_drone
 python3 scripts/start_llm_planner_stack.py --model /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/scripts/drone_planner_checkpoints_trial1k/final_merged --served-model-name qwen25_7b_drone_planner1k
+
+
+##check gpu usuahe
+nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free --format=csv,noheader,nounits -i 1
+```
+
+This gives you GPU 1 specifically (your target) in MB:
+```
+1, NVIDIA L40S, 46068, 3386, 42682
+
+
+# One command that does both — shows user, PID, memory usage, and process name
+nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader -i 1 | while read pid mem; do
+    pid=$(echo $pid | tr -d ',')
+    mem=$(echo $mem | tr -d ' MiB,')
+    user=$(ps -p $pid -o user= 2>/dev/null || echo "unknown")
+    cmd=$(ps -p $pid -o comm= 2>/dev/null || echo "unknown")
+    echo "$user | PID: $pid | Memory: $mem MiB | Process: $cmd"
+done
+```
+
+ps aux | grep -E "gazebo|px4|mavros|ros" | grep -v grep
+
+
+cd /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone
+python3 scripts/start_llm_planner_stack.py \
+  --goal-x 3.0 \
+  --goal-y 35.0 \
+  --goal-z 2.3
+
+
+# Kill only your own processes
+pkill -u $USER -f gazebo
+pkill -u $USER -f gzserver
+pkill -u $USER -f gzclient
+pkill -u $USER -f px4
+pkill -u $USER -f PX4
+pkill -u $USER -f mavros
+pkill -u $USER -f mavlink
+pkill -u $USER -f roslaunch
+pkill -u $USER -f rosrun
+pkill -u $USER -f roscore
+pkill -f "vllm"
+
+vllm serve Qwen/Qwen2.5-1.5B-Instruct \
+  --served-model-name qwen15b \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --dtype auto \
+  --api-key token-abc123 \
+  --gpu-memory-utilization 0.3 \
+  --max-model-len 4096
+
+
+python3 query_qwen_prompt_variants.py --model qwen15b --url http://127.0.0.1:8000/v1/chat/completions
+
+python3 scripts/train.py \
+  --data-path dataset/dataset_merged_without_reasoning.csv \
+  --prompt-file config/variants/03_no_reasoning_one_example.txt
+
+
+# Qwen 14B: launch vLLM
+vllm serve Qwen/Qwen2.5-14B-Instruct \
+  --served-model-name Qwen/Qwen2.5-14B-Instruct \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --dtype auto \
+  --api-key token-abc123
+
+# Qwen 14B: run prompt-variant queries
+python3 px4_ws/src/llm_drone/scripts/query_qwen_prompt_variants.py \
+  --url http://localhost:8000/v1/chat/completions \
+  --api-key token-abc123 \
+  --model Qwen/Qwen2.5-14B-Instruct
+
+
+# Qwen 32B: launch vLLM
+vllm serve Qwen/Qwen2.5-32B-Instruct \
+  --served-model-name Qwen/Qwen2.5-32B-Instruct \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --dtype auto \
+  --api-key token-abc123
+
+# Qwen 32B: run prompt-variant queries
+python3 px4_ws/src/llm_drone/scripts/query_qwen_prompt_variants.py \
+  --url http://localhost:8000/v1/chat/completions \
+  --api-key token-abc123 \
+  --model Qwen/Qwen2.5-32B-Instruct
