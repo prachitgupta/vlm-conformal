@@ -27,6 +27,7 @@ import cv2
 import numpy as np
 import json
 from collections import deque
+from pathlib import Path
 try:
     from openai import OpenAI
 except ImportError:
@@ -49,7 +50,7 @@ from llm_drone.llm.llm_prompt_common import (
     DATASET_PROMPT_FILENAME,
     DEFAULT_SYSTEM_PROMPT,
     build_environment_vector,
-    load_system_prompt,
+    load_system_prompt_from_path,
     resolve_prompt_file,
 )
 
@@ -185,13 +186,7 @@ class LLMTrajectoryPlanner(Node):
         
         # OpenAI client is created lazily only when provider=openai.
         self.client = None
-        
-        # Load prompt from file
-        prompt_file = self._resolve_prompt_file()
-        self.system_prompt = load_system_prompt(DATASET_PROMPT_FILENAME)
-        if not prompt_file.exists():
-            self.get_logger().warn(f'Prompt file not found: {prompt_file}')
-        
+
         # Parameters
         self.declare_parameter('goal_x', 35.0)
         self.declare_parameter('goal_y', 3.0)
@@ -212,7 +207,18 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('max_velocity_mps', 15.0)
         self.declare_parameter('waypoint_acceptance_radius_m', 0.5)
         self.declare_parameter('use_legacy_goto_execution', False)
-        
+        self.declare_parameter('prompt_file', '')
+
+        prompt_file_override = str(self.get_parameter('prompt_file').value or '').strip()
+        prompt_file = self._resolve_prompt_file(prompt_file_override)
+        self.system_prompt = load_system_prompt_from_path(prompt_file)
+        if prompt_file.exists():
+            self.get_logger().info(f'Loaded system prompt from: {prompt_file}')
+        else:
+            self.get_logger().warn(
+                f'Prompt file not found: {prompt_file}; using built-in default prompt'
+            )
+
         goal_input = np.array([
             self.get_parameter('goal_x').value,
             self.get_parameter('goal_y').value,
@@ -324,8 +330,10 @@ class LLMTrajectoryPlanner(Node):
         """Fallback prompt if file not found"""
         return DEFAULT_SYSTEM_PROMPT
 
-    def _resolve_prompt_file(self):
+    def _resolve_prompt_file(self, prompt_file_override=None):
         """Resolve prompt path for both source and installed package layouts."""
+        if prompt_file_override:
+            return Path(prompt_file_override).expanduser().resolve()
         return resolve_prompt_file(DATASET_PROMPT_FILENAME)
     
     def _load_openai_key(self):

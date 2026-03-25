@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -151,6 +152,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-model-len", type=int, default=DEFAULT_MAX_MODEL_LEN)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.75)
     parser.add_argument("--dtype", default="bfloat16")
+    parser.add_argument(
+        "--planner-prompt-file",
+        default=os.environ.get("LLM_PLANNER_PROMPT_FILE", "").strip(),
+        help=(
+            "Optional path to a fixed prompt .txt for llm_planner. "
+            "If unset, llm_planner uses its built-in default prompt path. "
+            "Can also be overridden via LLM_PLANNER_PROMPT_FILE."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -401,6 +411,16 @@ def main() -> int:
     else:
         model_spec = model_spec_raw
 
+    planner_prompt_file = ""
+    planner_prompt_raw = str(args.planner_prompt_file).strip()
+    if planner_prompt_raw:
+        planner_prompt_candidate = Path(planner_prompt_raw).expanduser()
+        if not planner_prompt_candidate.exists():
+            raise FileNotFoundError(
+                f"--planner-prompt-file does not exist: {planner_prompt_candidate}"
+            )
+        planner_prompt_file = str(planner_prompt_candidate.resolve())
+
     vllm_url = f"http://{args.vllm_host}:{args.vllm_port}/v1/chat/completions"
     vllm_health_url = f"http://{args.vllm_host}:{args.vllm_port}/health"
 
@@ -418,21 +438,37 @@ def main() -> int:
         name="mission_executor",
         cmd=ros_wrapped("ros2 run llm_drone mission_executor --sim"),
     )
+    planner_tokens = [
+        "ros2",
+        "run",
+        "llm_drone",
+        "llm",
+        "--ros-args",
+        "-p",
+        f"goal_x:={args.goal_x}",
+        "-p",
+        f"goal_y:={args.goal_y}",
+        "-p",
+        f"goal_z:={args.goal_z}",
+        "-p",
+        f"goal_frame:={args.goal_frame}",
+        "-p",
+        "llm_provider:=vllm",
+        "-p",
+        f"vllm_url:={vllm_url}",
+        "-p",
+        f"vllm_model:={args.served_model_name}",
+        "-p",
+        f"vllm_api_key:={args.api_key}",
+    ]
+    if planner_prompt_file:
+        planner_tokens.extend(["-p", f"prompt_file:={planner_prompt_file}"])
+
     # 3) Planner process: this stays dormant until both mission and vLLM are
     #    confirmed ready.
     planner = ManagedProcess(
         name="llm_planner",
-        cmd=ros_wrapped(
-            "ros2 run llm_drone llm --ros-args "
-            f"-p goal_x:={args.goal_x} "
-            f"-p goal_y:={args.goal_y} "
-            f"-p goal_z:={args.goal_z} "
-            f"-p goal_frame:={args.goal_frame} "
-            f"-p llm_provider:=vllm "
-            f"-p vllm_url:={vllm_url} "
-            f"-p vllm_model:={args.served_model_name} "
-            f"-p vllm_api_key:={args.api_key}"
-        ),
+        cmd=ros_wrapped(shlex.join(planner_tokens)),
     )
     # 4) vLLM process: serves either:
     #    - the merged fine-tuned model produced by train.py, or
@@ -459,6 +495,8 @@ def main() -> int:
         print("[startup] launching PX4/Gazebo master stack", flush=True)
         print(f"[startup] master command: {args.master_command}", flush=True)
         print(f"[startup] vLLM model spec: {model_spec}", flush=True)
+        if planner_prompt_file:
+            print(f"[startup] planner prompt file: {planner_prompt_file}", flush=True)
         master.start()
 
         # Do not start mission_executor immediately. Wait until the master
