@@ -8,10 +8,10 @@ to be edited by hand during experiments. The default flow is:
    stack (Gazebo, PX4 SITL, MicroDDS/bridge tools, RQT if your script does so).
 2. Wait until the PX4 stack is active enough that ROS odometry is flowing on
    `/fmu/out/vehicle_odometry`.
-3. Start the ROS mission executor and wait until PX4 reports the vehicle is
-   airborne and in OFFBOARD mode.
+3. Start the ROS mission executor and wait until PX4 reports takeoff complete
+   and the vehicle is airborne.
 4. Start a vLLM server hosting the chosen model and wait until the HTTP health
-   endpoint responds.
+   endpoint responds while mission_executor finishes switching to OFFBOARD.
 5. Once both the mission side and the vLLM side are ready, launch llm_planner.
 
 If your lab setup changes, the easiest things to tweak are:
@@ -37,6 +37,7 @@ import urllib.request
 from pathlib import Path
 
 
+TAKEOFF_COMPLETE_MARKER = "Takeoff completion: drone is airborne."
 MISSION_READY_MARKER = "Drone is airborne and in OFFBOARD mode."
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
@@ -617,18 +618,26 @@ def main() -> int:
         print("[startup] launching mission_executor", flush=True)
         mission.start()
 
-        print(f"[startup] waiting for mission readiness marker: {MISSION_READY_MARKER}", flush=True)
-        mission.wait_for_output(MISSION_READY_MARKER, timeout_s=args.mission_timeout_s)
-
         # Bring up the model server only after the vehicle is already airborne
-        # and stable in OFFBOARD. This keeps vLLM startup completely out of the
-        # critical path for takeoff and avoids GPU/model initialization noise
-        # interfering with sim bring-up experiments.
+        # according to mission_executor's explicit takeoff-complete marker.
+        # mission_executor still needs a little more time to switch to OFFBOARD,
+        # so we keep the stricter MISSION_READY_MARKER gate below for launching
+        # llm_planner. This keeps vLLM startup out of the takeoff critical path
+        # while still requiring full OFFBOARD readiness before planning starts.
+        print(
+            f"[startup] waiting for takeoff completion marker: {TAKEOFF_COMPLETE_MARKER}",
+            flush=True,
+        )
+        mission.wait_for_output(TAKEOFF_COMPLETE_MARKER, timeout_s=args.mission_timeout_s)
+
         print("[startup] launching vLLM server", flush=True)
         vllm.start()
 
         print(f"[startup] waiting for vLLM health endpoint: {vllm_health_url}", flush=True)
         wait_for_http_ready(vllm_health_url, timeout_s=args.vllm_timeout_s)
+
+        print(f"[startup] waiting for mission readiness marker: {MISSION_READY_MARKER}", flush=True)
+        mission.wait_for_output(MISSION_READY_MARKER, timeout_s=args.mission_timeout_s)
 
         print(
             f"[startup] waiting for planner odometry topic to produce data: {args.odom_topic}",

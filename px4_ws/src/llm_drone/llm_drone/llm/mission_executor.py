@@ -18,6 +18,7 @@ from mavsdk import System, telemetry
 from mavsdk.offboard import OffboardError, VelocityBodyYawspeed
 
 print = partial(builtins.print, flush=True)
+TAKEOFF_COMPLETE_MARKER = "Takeoff completion: drone is airborne."
 MISSION_READY_MARKER = "Drone is airborne and in OFFBOARD mode."
 
 
@@ -183,6 +184,7 @@ class MissionExecutor:
         if not await self.wait_until_in_air(timeout_s=float(takeoff_timeout_s)):
             raise RuntimeError("Takeoff command accepted, but vehicle never reported airborne")
         print("  ✅ Drone is airborne")
+        print(f"[startup] {TAKEOFF_COMPLETE_MARKER}")
         self.mission_state = "HOVERING"
         if float(stabilize_time_s) > 0.0:
             print(f"  Stabilizing for {float(stabilize_time_s):.1f}s...")
