@@ -18,6 +18,7 @@ from mavsdk import System, telemetry
 from mavsdk.offboard import OffboardError, VelocityBodyYawspeed
 
 print = partial(builtins.print, flush=True)
+TAKEOFF_CONFIRM_ALTITUDE_M = 2.0
 TAKEOFF_COMPLETE_MARKER = "Takeoff completion: drone is airborne."
 MISSION_READY_MARKER = "Drone is airborne and in OFFBOARD mode."
 
@@ -100,6 +101,12 @@ class MissionExecutor:
             return bool(in_air)
         return False
 
+    async def get_local_altitude_m(self):
+        """Return local altitude above the takeoff point in metres."""
+        async for position_velocity in self.drone.telemetry.position_velocity_ned():
+            return max(0.0, float(-position_velocity.position.down_m))
+        return None
+
     async def wait_until_armed(self, timeout_s=8.0):
         """Wait until the vehicle reports armed."""
         deadline = asyncio.get_running_loop().time() + float(timeout_s)
@@ -126,6 +133,28 @@ class MissionExecutor:
                 return True
             await asyncio.sleep(0.2)
         return await self.get_in_air()
+
+    async def wait_until_takeoff_confirmed(self, timeout_s=20.0, min_altitude_m=TAKEOFF_CONFIRM_ALTITUDE_M):
+        """Wait until PX4 reports airborne and local altitude exceeds the threshold."""
+        deadline = asyncio.get_running_loop().time() + float(timeout_s)
+        last_altitude_m = None
+        while asyncio.get_running_loop().time() < deadline:
+            if await self.get_in_air():
+                altitude_m = await self.get_local_altitude_m()
+                if altitude_m is not None:
+                    last_altitude_m = altitude_m
+                    if altitude_m >= float(min_altitude_m):
+                        return altitude_m
+            await asyncio.sleep(0.2)
+
+        if await self.get_in_air():
+            altitude_m = await self.get_local_altitude_m()
+            if altitude_m is not None and altitude_m >= float(min_altitude_m):
+                return altitude_m
+            if altitude_m is not None:
+                last_altitude_m = altitude_m
+
+        return last_altitude_m
 
     async def ensure_hold_mode(self, timeout_s=8.0):
         """Best-effort: switch to HOLD before arming if needed."""
@@ -181,9 +210,19 @@ class MissionExecutor:
         print("\n🛫 Taking off...")
         self.mission_state = "TAKEOFF"
         await self.drone.action.takeoff()
-        if not await self.wait_until_in_air(timeout_s=float(takeoff_timeout_s)):
-            raise RuntimeError("Takeoff command accepted, but vehicle never reported airborne")
-        print("  ✅ Drone is airborne")
+        altitude_m = await self.wait_until_takeoff_confirmed(
+            timeout_s=float(takeoff_timeout_s),
+            min_altitude_m=TAKEOFF_CONFIRM_ALTITUDE_M,
+        )
+        if altitude_m is None or altitude_m < TAKEOFF_CONFIRM_ALTITUDE_M:
+            raise RuntimeError(
+                "Takeoff command accepted, but vehicle never confirmed takeoff "
+                f"above {TAKEOFF_CONFIRM_ALTITUDE_M:.1f} m"
+            )
+        print(
+            "  ✅ Drone has taken off "
+            f"(local altitude {altitude_m:.2f} m >= {TAKEOFF_CONFIRM_ALTITUDE_M:.1f} m)"
+        )
         print(f"[startup] {TAKEOFF_COMPLETE_MARKER}")
         self.mission_state = "HOVERING"
         if float(stabilize_time_s) > 0.0:
