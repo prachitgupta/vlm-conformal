@@ -211,3 +211,45 @@ python3 px4_ws/src/llm_drone/scripts/query_qwen_prompt_variants.py \
   --url http://localhost:8000/v1/chat/completions \
   --api-key token-abc123 \
   --model Qwen/Qwen2.5-32B-Instruct
+
+
+python3 px4_ws/src/llm_drone/scripts/query_qwen_prompt_variants.py \
+  --url http://localhost:8000/v1/chat/completions \
+  --api-key token-abc123 \
+  --model qwen25_7b_drone_plannersp \
+  --max-tokens 128
+
+
+## Teacher distillation with Qwen 72B on Delta AI server
+
+# 1. SSH into the server
+ssh <your_user>@<delta_ai_server>
+
+# 2. Activate your environment
+source ~/train_env/bin/activate
+
+# 3. Start the teacher model server
+vllm serve Qwen/Qwen2.5-72B-Instruct \
+  --served-model-name Qwen/Qwen2.5-72B-Instruct \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --dtype auto \
+  --api-key token-abc123 \
+  --gpu-memory-utilization 0.9 \
+  --max-model-len 4096
+
+# 4. From the llm_drone repo, generate teacher-labeled data with variant_X
+cd /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone
+python3 scripts/teacher_data_generator.py \
+  --input-csv dataset/dataset_merged_without_reasoning.csv \
+  --prompt-file config/variant_X.txt \
+  --output-name dataset_teacher_qwen72b_variant_x.csv \
+  --base-url http://127.0.0.1:8000/v1 \
+  --api-key token-abc123 \
+  --model Qwen/Qwen2.5-72B-Instruct
+
+
+python3 px4_ws/src/llm_drone/scripts/start_llm_planner_stack.py --model ~/vlm-conformal/px4_ws/src/llm_drone/models/drone_planner_checkpoints_shortPrompt/final_merged/ --served-model-name qwen25_7b_drone_planner --planner-prompt-file px4_ws/src/llm_drone/config/variants/03_no_reasoning_one_example.txt
+
+
+scp -r prachit2@172.22.224.93:/home/prachit2/vlm-conformal/px4_ws/src/llm_drone/config/variants/ ~/Desktop/variants/

@@ -93,6 +93,20 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 DEFAULT_OUTPUT_DIR = (Path(__file__).resolve().parents[1] / "models" / "drone_planner_checkpoints").resolve()
 
+CURRENT_POS_RE = re.compile(
+    r"Current position NED is \(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\) m\.",
+    re.IGNORECASE,
+)
+GOAL_POS_RE = re.compile(
+    r"Goal position NED is \(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\) m\.",
+    re.IGNORECASE,
+)
+NEAREST_OBS_RE = re.compile(
+    r"Nearest obstacle sector is ([a-z_]+) at ([-0-9.]+) m",
+    re.IGNORECASE,
+)
+SAFETY_RADIUS_M = 1.5
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 2: CONFIGURATION
@@ -783,6 +797,75 @@ def prepare_output_dirs(output_dir: str | os.PathLike[str]) -> tuple[Path, Path,
 from transformers import TrainerCallback
 import numpy as np
 
+def parse_prompt_eval_context(user_text: str) -> dict[str, object] | None:
+    if not isinstance(user_text, str):
+        return None
+
+    current_match = CURRENT_POS_RE.search(user_text)
+    goal_match = GOAL_POS_RE.search(user_text)
+    obstacle_match = NEAREST_OBS_RE.search(user_text)
+    if current_match is None or goal_match is None:
+        return None
+
+    current = np.array([float(current_match.group(i)) for i in range(1, 4)], dtype=float)
+    goal = np.array([float(goal_match.group(i)) for i in range(1, 4)], dtype=float)
+
+    obstacle_sector = None
+    obstacle_distance = None
+    if obstacle_match is not None:
+        obstacle_sector = str(obstacle_match.group(1)).strip().lower()
+        obstacle_distance = float(obstacle_match.group(2))
+
+    return {
+        "current": current,
+        "goal": goal,
+        "obstacle_sector": obstacle_sector,
+        "obstacle_distance": obstacle_distance,
+    }
+
+
+def estimate_safety_penalty(pred_wps: list[dict], context: dict[str, object] | None) -> float | None:
+    if context is None or not pred_wps:
+        return None
+    obstacle_distance = context.get("obstacle_distance", None)
+    obstacle_sector = context.get("obstacle_sector", None)
+    if obstacle_distance is None or obstacle_sector is None:
+        return None
+
+    sector = str(obstacle_sector)
+    penalty = 0.0
+    for wp in pred_wps:
+        x = float(wp["x"])
+        y = float(wp["y"])
+        if sector == "center":
+            clearance_proxy = float(obstacle_distance) - abs(y)
+        elif sector in ("left", "far_left"):
+            clearance_proxy = float(obstacle_distance) - max(0.0, -y)
+        elif sector in ("right", "far_right"):
+            clearance_proxy = float(obstacle_distance) - max(0.0, y)
+        else:
+            clearance_proxy = float(obstacle_distance)
+        penalty += max(0.0, SAFETY_RADIUS_M - clearance_proxy)
+    return float(penalty)
+
+
+def estimate_goal_progress_reward(pred_wps: list[dict], context: dict[str, object] | None) -> float | None:
+    if context is None or len(pred_wps) != 5:
+        return None
+    current = np.asarray(context["current"], dtype=float)
+    goal = np.asarray(context["goal"], dtype=float)
+    final_wp = np.array([float(pred_wps[-1]["x"]), float(pred_wps[-1]["y"]), float(goal[2])], dtype=float)
+    return float(np.linalg.norm(goal - current) - np.linalg.norm(goal - final_wp))
+
+
+def estimate_final_waypoint_l2_to_goal(pred_wps: list[dict], context: dict[str, object] | None) -> float | None:
+    if context is None or len(pred_wps) != 5:
+        return None
+    goal = np.asarray(context["goal"], dtype=float)
+    final_wp = np.array([float(pred_wps[-1]["x"]), float(pred_wps[-1]["y"]), float(goal[2])], dtype=float)
+    return float(np.linalg.norm(goal - final_wp))
+
+
 class WaypointEvalCallback(TrainerCallback):
     """
     After each eval step, generate predictions on a small subset of the
@@ -800,15 +883,16 @@ class WaypointEvalCallback(TrainerCallback):
 
         valid_json = 0
         l2_errors = []
+        safety_penalties = []
+        goal_progress_rewards = []
         FastLanguageModel.for_inference(self.model)  # Switch to inference mode
 
         for sample in self.eval_samples:
             messages = sample["messages"]
-
-            # Get the ground truth assistant message (MPC label)
-            gt_content = next(
-                m["content"] for m in messages if m["role"] == "assistant"
+            user_content = next(
+                m["content"] for m in messages if m["role"] == "user"
             )
+            eval_context = parse_prompt_eval_context(user_content)
 
             # Build the input (system + user only, no assistant turn)
             input_messages = [m for m in messages if m["role"] != "assistant"]
@@ -837,17 +921,17 @@ class WaypointEvalCallback(TrainerCallback):
                 valid_json += 1
 
                 pred_wps = pred_data.get("waypoints", [])
-                gt_data = json.loads(gt_content)
-                gt_wps = gt_data.get("waypoints", [])
+                if len(pred_wps) == 5:
+                    final_l2 = estimate_final_waypoint_l2_to_goal(pred_wps, eval_context)
+                    if final_l2 is not None:
+                        l2_errors.append(final_l2)
+                    safety_penalty = estimate_safety_penalty(pred_wps, eval_context)
+                    if safety_penalty is not None:
+                        safety_penalties.append(safety_penalty)
 
-                # --- Metric 2: Waypoint L2 error ---
-                if len(pred_wps) == 5 and len(gt_wps) == 5:
-                    for p, g in zip(pred_wps, gt_wps):
-                        dist = np.sqrt(
-                            (p["x"] - g["x"])**2 +
-                            (p["y"] - g["y"])**2
-                        )
-                        l2_errors.append(dist)
+                    goal_progress_reward = estimate_goal_progress_reward(pred_wps, eval_context)
+                    if goal_progress_reward is not None:
+                        goal_progress_rewards.append(goal_progress_reward)
 
             except (json.JSONDecodeError, KeyError, TypeError):
                 pass  # JSON invalid — already counted above
@@ -858,9 +942,13 @@ class WaypointEvalCallback(TrainerCallback):
         n = len(self.eval_samples)
         json_rate = valid_json / n * 100
         mean_l2 = np.mean(l2_errors) if l2_errors else float("nan")
+        mean_safety_penalty = np.mean(safety_penalties) if safety_penalties else float("nan")
+        mean_goal_progress_reward = np.mean(goal_progress_rewards) if goal_progress_rewards else float("nan")
 
         log.info(f"  JSON validity    : {json_rate:.1f}% ({valid_json}/{n})")
         log.info(f"  Mean L2 error    : {mean_l2:.3f} m")
+        log.info(f"  Safety penalty   : {mean_safety_penalty:.3f}")
+        log.info(f"  Goal progress reward : {mean_goal_progress_reward:.3f}")
 
         # Targets to aim for:
         #   JSON validity  > 95%

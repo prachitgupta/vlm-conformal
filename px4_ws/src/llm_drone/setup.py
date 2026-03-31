@@ -14,10 +14,16 @@ setup(
         ('share/' + package_name + '/config', [
             'config/llm_prompt.txt',
             'config/llm_planner_prompt.txt',
+            'config/variant_X.txt',
             'config/voxl_llm_prompt.txt',
         ]),
     ],
-    install_requires=['setuptools'],
+    install_requires=[
+        'setuptools',
+        'openai',
+        'instructor',
+        'pydantic',
+    ],
     zip_safe=True,
     maintainer='prachit',
     maintainer_email='prachitgupta100@gmail.com',

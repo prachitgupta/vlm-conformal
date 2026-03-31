@@ -33,12 +33,5 @@ tmux new-session -d -s llm_dataset "bash -lc '
   source install/setup.bash
   mkdir -p /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs
   mkdir -p /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/dataset/offline_ground_truth_runs
-  ros2 run llm_drone offline_dataset_batch_runner \
-    --world-dir /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/worlds \
-    --world-glob \"*.sdf\" \
-    --px4-dir /home/prachit2/PX4-Autopilot \
-    --launch-script /home/prachit2/PX4-Autopilot/Tools/simulation/gz/launch_obstacle_avoidance_x500.sh \
-    --skip-existing-csv \
-    --continue-on-error \
-    2>&1 | tee /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs/overnight_batch.log
+  ros2 run llm_drone offline_dataset_batch_runner --world-dir /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/worlds --world-glob '*.sdf' --skip-existing-csv --continue-on-error --px4-dir /home/prachit2/PX4-Autopilot --launch-script /home/prachit2/PX4-Autopilot/Tools/simulation/gz/launch_obstacle_avoidance_x500.sh 2>&1 | tee /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/generated/offline_ground_truth/batch_logs/overnight_batch.log
   '"

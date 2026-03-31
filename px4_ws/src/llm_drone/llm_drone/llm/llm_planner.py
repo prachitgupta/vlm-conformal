@@ -28,10 +28,15 @@ import numpy as np
 import json
 from collections import deque
 from pathlib import Path as FilesystemPath
+from pydantic import BaseModel
 try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
+try:
+    import instructor
+except ImportError:
+    instructor = None
 import os
 import urllib.request
 import urllib.error
@@ -68,6 +73,22 @@ DEPTH_FILTER_MAX_LATERAL_M = 4.0
 DEPTH_FILTER_MIN_BELOW_BODY_M = -0.25
 DEPTH_FILTER_MAX_BELOW_BODY_M = 2.5
 DEPTH_FILTER_FLOOR_CLEARANCE_M = 0.20
+LATEST_PROMPT_FILENAME = "variant_X.txt"
+
+
+class Waypoint2D(BaseModel):
+    x: float
+    y: float
+
+
+class PlanTrace(BaseModel):
+    what_it_saw: str
+    reasoning: str
+
+
+class PlannerOutput(BaseModel):
+    waypoints: list[Waypoint2D]
+    plan_trace: PlanTrace
 
 
 class LocalObstacleMap:
@@ -186,6 +207,7 @@ class LLMTrajectoryPlanner(Node):
         
         # OpenAI client is created lazily only when provider=openai.
         self.client = None
+        self.structured_client = None
 
         # Parameters
         self.declare_parameter('goal_x', 35.0)
@@ -207,7 +229,7 @@ class LLMTrajectoryPlanner(Node):
         self.declare_parameter('max_velocity_mps', 15.0)
         self.declare_parameter('waypoint_acceptance_radius_m', 0.5)
         self.declare_parameter('use_legacy_goto_execution', False)
-        self.declare_parameter('prompt_file', '')
+        self.declare_parameter('prompt_file', str((FilesystemPath(__file__).resolve().parents[2] / 'config' / LATEST_PROMPT_FILENAME).resolve()))
 
         prompt_file_override = str(self.get_parameter('prompt_file').value or '').strip()
         prompt_file = self._resolve_prompt_file(prompt_file_override)
@@ -334,7 +356,7 @@ class LLMTrajectoryPlanner(Node):
         """Resolve prompt path for both source and installed package layouts."""
         if prompt_file_override:
             return FilesystemPath(prompt_file_override).expanduser().resolve()
-        return resolve_prompt_file(DATASET_PROMPT_FILENAME)
+        return resolve_prompt_file(LATEST_PROMPT_FILENAME)
     
     def _load_openai_key(self):
         api_key = os.getenv('OPENAI_API_KEY')
@@ -671,62 +693,81 @@ class LLMTrajectoryPlanner(Node):
         self.client = OpenAI(api_key=api_key)
         return self.client
 
+    def _get_structured_client(self, provider: str):
+        """Initialize an instructor-wrapped OpenAI-compatible client on first use."""
+        if self.structured_client is not None:
+            return self.structured_client
+        if instructor is None:
+            raise RuntimeError('instructor package is not installed in this Python environment')
+        if OpenAI is None:
+            raise RuntimeError('openai package is not installed in this Python environment')
+
+        provider = str(provider).strip().lower()
+        if provider == 'openai':
+            base_client = self._get_openai_client()
+        elif provider in ('vllm', 'tgis'):
+            api_key = os.getenv('VLLM_API_KEY', str(self.get_parameter('vllm_api_key').value).strip())
+            if not api_key:
+                raise RuntimeError('vLLM API key is empty. Set VLLM_API_KEY or parameter vllm_api_key')
+            base_url = str(self.get_parameter('vllm_url').value).strip()
+            if base_url.endswith('/chat/completions'):
+                base_url = base_url[: -len('/chat/completions')]
+            base_client = OpenAI(
+                api_key=api_key,
+                base_url=base_url,
+            )
+        else:
+            raise RuntimeError(f'Instructor structured output is not configured for provider={provider}')
+
+        self.structured_client = instructor.from_openai(base_client)
+        return self.structured_client
+
     def query_llm(self):
-        """Query the configured LLM backend and enforce the configured waypoint schema."""
+        """Query the configured LLM backend and return a validated waypoint rollout."""
         user_message, env_vector, env_text = self.build_live_prompt()
 
         provider = str(self.get_parameter('llm_provider').value).strip().lower()
         if provider == 'openai':
-            content = self.query_openai_model(user_message)
+            output = self.query_structured_model(user_message, provider)
         elif provider in ('vllm', 'tgis'):
-            content = self.query_vllm_model(user_message)
+            output = self.query_structured_model(user_message, provider)
         else:
             content = self.query_qwen_model(user_message)
-        self.get_logger().info(f'Raw LLM response:\n{content}')
-        
-        # Extract JSON
+            self.get_logger().info(f'Raw LLM response:\n{content}')
+            try:
+                start = content.find('{')
+                end = content.rfind('}') + 1
+                output = PlannerOutput.model_validate_json(content[start:end])
+            except Exception as e:
+                self.get_logger().error(f'Failed to parse LLM response: {e}')
+                return None
+
         try:
-            # Try to find JSON in response
-            start = content.find('{')
-            end = content.rfind('}') + 1
-            json_str = content[start:end]
-            data = json.loads(json_str)
-            
-            if isinstance(data, dict) and "waypoints" in data:
-                waypoints = data.get("waypoints", [])
-                if not isinstance(waypoints, list):
-                    raise ValueError("waypoints must be a list")
-                if len(waypoints) != LLM_WAYPOINT_COUNT:
-                    raise ValueError(
-                        f"Expected exactly {LLM_WAYPOINT_COUNT} waypoints, got {len(waypoints)}"
-                    )
+            if len(output.waypoints) != LLM_WAYPOINT_COUNT:
+                raise ValueError(
+                    f"Expected exactly {LLM_WAYPOINT_COUNT} waypoints, got {len(output.waypoints)}"
+                )
 
-                llm_waypoints = []
-                for i, pt in enumerate(waypoints):
-                    wp_xy = np.array([
-                        float(pt['x']),
-                        float(pt['y']),
-                    ], dtype=float)
-                    if not np.all(np.isfinite(wp_xy)):
-                        raise ValueError(f"waypoint {i} contains non-finite x/y values")
+            llm_waypoints = []
+            for i, pt in enumerate(output.waypoints):
+                wp_xy = np.array([float(pt.x), float(pt.y)], dtype=float)
+                if not np.all(np.isfinite(wp_xy)):
+                    raise ValueError(f"waypoint {i} contains non-finite x/y values")
 
-                    # The LLM predicts planar x/y only. z is injected from the fixed goal altitude.
-                    wp_xyz = np.array([
-                        float(wp_xy[0]),
-                        float(wp_xy[1]),
-                        float(self.goal[2]),
-                    ], dtype=float)
-                    if not np.all(np.isfinite(wp_xyz)):
-                        raise ValueError(f"waypoint {i} contains non-finite values")
-                    llm_waypoints.append(wp_xyz)
-            else:
-                raise ValueError("Missing required 'waypoints' schema; fallback single-point schema disabled")
+                wp_xyz = np.array([
+                    float(wp_xy[0]),
+                    float(wp_xy[1]),
+                    float(self.goal[2]),
+                ], dtype=float)
+                if not np.all(np.isfinite(wp_xyz)):
+                    raise ValueError(f"waypoint {i} contains non-finite values")
+                llm_waypoints.append(wp_xyz)
 
-            self.get_logger().info(f"Reasoning: {data.get('reasoning', 'N/A')}")
+            self.get_logger().info(f"What it saw: {output.plan_trace.what_it_saw}")
+            self.get_logger().info(f"Reasoning: {output.plan_trace.reasoning}")
             return llm_waypoints
-            
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            self.get_logger().error(f'Failed to parse LLM response: {e}')
+        except (ValueError, TypeError) as e:
+            self.get_logger().error(f'Failed to validate structured planner output: {e}')
             return None
 
     def publish_llm_trajectory_sequence(self, waypoints_ned, stamp_msg):
@@ -764,6 +805,35 @@ class LLMTrajectoryPlanner(Node):
             return response.output_text
         except Exception as e:
             self.get_logger().error(f'OpenAI request failed (model={model_name}): {e}')
+            raise
+
+    def query_structured_model(self, user_message, provider):
+        """Query an OpenAI-compatible backend and extract PlannerOutput via instructor."""
+        client = self._get_structured_client(provider)
+        if provider == 'openai':
+            model_name = str(self.get_parameter('openai_model').value)
+            temperature = 0.1
+            max_tokens = 400
+        else:
+            model_name = str(self.get_parameter('vllm_model').value).strip()
+            temperature = float(self.get_parameter('vllm_temperature').value)
+            max_tokens = int(self.get_parameter('vllm_max_tokens').value)
+
+        try:
+            return client.chat.completions.create(
+                model=model_name,
+                response_model=PlannerOutput,
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except Exception as e:
+            self.get_logger().error(
+                f'Structured request failed (provider={provider}, model={model_name}): {e}'
+            )
             raise
 
     def query_qwen_model(self, user_message):
@@ -816,68 +886,6 @@ class LLMTrajectoryPlanner(Node):
         except urllib.error.URLError as e:
             self.get_logger().error(
                 "Local Qwen request failed "
-                f"(url={url}, model={model_name}): {e}"
-            )
-            raise
-
-    def query_vllm_model(self, user_message):
-        """Query a vLLM/TGIS OpenAI-compatible server via /v1/chat/completions."""
-        url = str(self.get_parameter('vllm_url').value).strip()
-        model_name = str(self.get_parameter('vllm_model').value).strip()
-        api_key = os.getenv('VLLM_API_KEY', str(self.get_parameter('vllm_api_key').value).strip())
-        temperature = float(self.get_parameter('vllm_temperature').value)
-        max_tokens = int(self.get_parameter('vllm_max_tokens').value)
-
-        if not api_key:
-            raise RuntimeError('vLLM API key is empty. Set VLLM_API_KEY or parameter vllm_api_key')
-
-        payload = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": False,
-        }
-
-        request = urllib.request.Request(
-            url=url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
-        )
-
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                body = response.read().decode("utf-8")
-            parsed = json.loads(body)
-            choices = parsed.get("choices", [])
-            if not choices:
-                raise RuntimeError("No choices returned by vLLM/TGIS server")
-            message = choices[0].get("message", {})
-            content = message.get("content", "")
-            if not content:
-                raise RuntimeError("Empty content returned by vLLM/TGIS server")
-            return content
-        except urllib.error.HTTPError as e:
-            error_body = ""
-            try:
-                error_body = e.read().decode("utf-8", errors="replace")
-            except Exception:
-                error_body = "<no response body>"
-            self.get_logger().error(
-                "vLLM/TGIS request failed "
-                f"(status={e.code}, url={url}, model={model_name}): {error_body}"
-            )
-            raise
-        except urllib.error.URLError as e:
-            self.get_logger().error(
-                "vLLM/TGIS request failed "
                 f"(url={url}, model={model_name}): {e}"
             )
             raise
