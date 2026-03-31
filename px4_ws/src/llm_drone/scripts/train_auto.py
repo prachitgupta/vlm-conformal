@@ -87,6 +87,15 @@ def parse_rank_values(raw: str) -> list[int]:
         raise ValueError("At least one rank value is required")
     return unique_sorted
 
+
+def canonical_target_module_sets() -> list[tuple[str, list[str]]]:
+    return [
+        ("qv_only", ["q_proj", "v_proj"]),
+        ("attention_only", ["q_proj", "k_proj", "v_proj", "o_proj"]),
+        ("mlp_only", ["gate_proj", "up_proj", "down_proj"]),
+        ("all_linear_layers", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]),
+    ]
+
 def load_fixed_prompt(prompt_file: str) -> dict[str, str]:
     path = Path(prompt_file).expanduser()
     if not path.is_absolute():
@@ -143,6 +152,19 @@ def build_trial_train_script(spec: dict, output_dir: Path, *, skip_merge: bool =
         text, count = re.subn(pattern, replacement, text, count=1)
         if count != 1:
             raise RuntimeError(f"Failed to patch {pattern!r} in trial train.py template")
+    target_modules_block = (
+        'target_modules: list = field(default_factory=lambda: [\n'
+        + "".join(f'        "{module}",' + "\n" for module in spec["target_modules"])
+        + "    ])"
+    )
+    text, count = re.subn(
+        r'target_modules: list = field\(default_factory=lambda: \[\n(?:\s*"[^"]+",?\s*\n)+\s*\]\)',
+        target_modules_block,
+        text,
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError("Failed to patch target_modules block in trial train.py template")
     if skip_merge:
         if MERGE_BLOCK not in text:
             raise RuntimeError("Failed to locate merge block in scripts/train.py template")
@@ -330,7 +352,8 @@ def main() -> int:
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
     rank_values = parse_rank_values(args.rank_values)
-    total_planned = len(rank_values)
+    target_module_sets = canonical_target_module_sets()
+    total_planned = len(rank_values) + len(target_module_sets)
     trial_budget = min(args.max_trials, total_planned) if args.max_trials > 0 else total_planned
     run_tag = datetime.now().strftime("llm_drone_%Y%m%d_%H%M%S")
     run_dir = RUN_ROOT / run_tag
@@ -339,7 +362,8 @@ def main() -> int:
     print(f"Using fixed dataset: {dataset_path}")
     print(f"Using fixed prompt: {prompt['prompt_path']}")
     print(
-        f"Planned up to {total_planned} LoRA trial(s) with a fixed dataset and fixed prompt. "
+        f"Planned up to {total_planned} LoRA trial(s): {len(rank_values)} rank trials, "
+        f"then {len(target_module_sets)} target-module trials at the best rank. "
         f"Budget capped at {trial_budget}."
     )
     if args.dry_run:
@@ -352,6 +376,18 @@ def main() -> int:
                 "stage": "rank_search",
                 "lora_r": rank,
                 "lora_alpha": rank * 2,
+            }
+            print(
+                f"[{preview_index}/{total_planned}] {build_trial_id(preview_index, spec)} :: "
+                f"{spec['prompt_path']} {spec['target_modules_name']} r={spec['lora_r']}"
+            )
+            preview_index += 1
+        for layer_name, target_modules in target_module_sets:
+            spec = {
+                **base_spec,
+                "stage": "target_module_search",
+                "target_modules_name": layer_name,
+                "target_modules": target_modules,
             }
             print(
                 f"[{preview_index}/{total_planned}] {build_trial_id(preview_index, spec)} :: "
@@ -418,6 +454,33 @@ def main() -> int:
 
         if best_rank_result is None:
             print("No successful LoRA trial met the selection criteria.")
+        else:
+            print(
+                f"Starting target-module sweep at best rank r={best_rank_result['lora_r']}."
+            )
+            for layer_name, target_modules in target_module_sets:
+                if trial_index > trial_budget:
+                    print(f"Reached trial budget ({trial_budget}) during target-module sweep.")
+                    break
+                spec = {
+                    **base_spec,
+                    "stage": "target_module_search",
+                    "lora_r": best_rank_result["lora_r"],
+                    "lora_alpha": best_rank_result["lora_alpha"],
+                    "target_modules_name": layer_name,
+                    "target_modules": target_modules,
+                }
+                result = run_single_trial(
+                    args=args,
+                    spec=spec,
+                    index=trial_index,
+                    total=total_planned,
+                    run_tag=run_tag,
+                    run_dir=run_dir,
+                )
+                trial_index += 1
+                if is_better(result, best_result):
+                    best_result = result
 
         if best_result is not None and not args.dry_run:
             final_returncode, final_train_log = train_best_model(
