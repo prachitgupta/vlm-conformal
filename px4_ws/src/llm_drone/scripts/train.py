@@ -852,18 +852,10 @@ def estimate_safety_penalty(pred_wps: list[dict], context: dict[str, object] | N
 def estimate_goal_progress_reward(pred_wps: list[dict], context: dict[str, object] | None) -> float | None:
     if context is None or len(pred_wps) != 5:
         return None
-    current = np.asarray(context["current"], dtype=float)
     goal = np.asarray(context["goal"], dtype=float)
+    first_wp = np.array([float(pred_wps[0]["x"]), float(pred_wps[0]["y"]), float(goal[2])], dtype=float)
     final_wp = np.array([float(pred_wps[-1]["x"]), float(pred_wps[-1]["y"]), float(goal[2])], dtype=float)
-    return float(np.linalg.norm(goal - current) - np.linalg.norm(goal - final_wp))
-
-
-def estimate_final_waypoint_l2_to_goal(pred_wps: list[dict], context: dict[str, object] | None) -> float | None:
-    if context is None or len(pred_wps) != 5:
-        return None
-    goal = np.asarray(context["goal"], dtype=float)
-    final_wp = np.array([float(pred_wps[-1]["x"]), float(pred_wps[-1]["y"]), float(goal[2])], dtype=float)
-    return float(np.linalg.norm(goal - final_wp))
+    return 1.0 if np.linalg.norm(goal - final_wp) < np.linalg.norm(goal - first_wp) else 0.0
 
 
 class WaypointEvalCallback(TrainerCallback):
@@ -882,7 +874,6 @@ class WaypointEvalCallback(TrainerCallback):
         log.info("Running waypoint-specific evaluation...")
 
         valid_json = 0
-        l2_errors = []
         safety_penalties = []
         goal_progress_rewards = []
         FastLanguageModel.for_inference(self.model)  # Switch to inference mode
@@ -922,9 +913,6 @@ class WaypointEvalCallback(TrainerCallback):
 
                 pred_wps = pred_data.get("waypoints", [])
                 if len(pred_wps) == 5:
-                    final_l2 = estimate_final_waypoint_l2_to_goal(pred_wps, eval_context)
-                    if final_l2 is not None:
-                        l2_errors.append(final_l2)
                     safety_penalty = estimate_safety_penalty(pred_wps, eval_context)
                     if safety_penalty is not None:
                         safety_penalties.append(safety_penalty)
@@ -941,18 +929,15 @@ class WaypointEvalCallback(TrainerCallback):
 
         n = len(self.eval_samples)
         json_rate = valid_json / n * 100
-        mean_l2 = np.mean(l2_errors) if l2_errors else float("nan")
         mean_safety_penalty = np.mean(safety_penalties) if safety_penalties else float("nan")
         mean_goal_progress_reward = np.mean(goal_progress_rewards) if goal_progress_rewards else float("nan")
 
         log.info(f"  JSON validity    : {json_rate:.1f}% ({valid_json}/{n})")
-        log.info(f"  Mean L2 error    : {mean_l2:.3f} m")
         log.info(f"  Safety penalty   : {mean_safety_penalty:.3f}")
         log.info(f"  Goal progress reward : {mean_goal_progress_reward:.3f}")
 
         # Targets to aim for:
         #   JSON validity  > 95%
-        #   Mean L2 error  < 0.5 m
         #   Safety violations = 0
 
 

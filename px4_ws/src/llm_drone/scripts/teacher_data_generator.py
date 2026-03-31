@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_CSV = REPO_ROOT / "dataset" / "dataset_merged_without_reasoning.csv"
 DEFAULT_PROMPT_FILE = REPO_ROOT / "config" / "variant_X.txt"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "dataset"
+DEFAULT_OUTPUT_NAME = "teacher_dataset.csv"
 
 
 class Waypoint(BaseModel):
@@ -49,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-csv", default=str(DEFAULT_INPUT_CSV))
     parser.add_argument("--prompt-file", default=str(DEFAULT_PROMPT_FILE))
-    parser.add_argument("--output-name", required=True, help="Output CSV filename to create inside dataset/")
+    parser.add_argument("--output-name", default=DEFAULT_OUTPUT_NAME, help="Output CSV filename to create inside dataset/")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
     parser.add_argument("--api-key", default="token-abc123")

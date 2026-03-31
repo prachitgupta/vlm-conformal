@@ -13,9 +13,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAIN_SCRIPT = REPO_ROOT / "scripts" / "train.py"
-ACTIVE_PROMPT_PATH = REPO_ROOT / "config" / "llm_prompt2d.txt"
 FIXED_PROMPT_PATH = REPO_ROOT / "config" / "variant_X_without_reasoning.txt"
-FIXED_DATASET_PATH = REPO_ROOT / "dataset" / "dataset_variant_x_preprocessed.csv"
+FIXED_DATASET_PATH = REPO_ROOT / "dataset" / "dataset_merged_without_reasoning.csv"
 AUTORESEARCH_ROOT = REPO_ROOT / "third_party" / "autoresearch"
 AUTORESEARCH_REMOTE = "https://github.com/karpathy/autoresearch.git"
 RUN_ROOT = AUTORESEARCH_ROOT / "llm_drone_runs"
@@ -23,7 +22,6 @@ RESULTS_TSV = AUTORESEARCH_ROOT / "llm_drone_results.tsv"
 TEMP_TRAIN_SCRIPT = REPO_ROOT / "scripts" / "_train_auto_trial.py"
 FINAL_MODEL_DIR = REPO_ROOT / "models" / "QWEN_STUDENT_WITHOUT_REASONING"
 
-L2_RE = re.compile(r"Mean L2 error\s*:\s*(n/a|[0-9.]+)\s*m")
 EVAL_LOSS_RE = re.compile(r"(?:'eval_loss'|\"eval_loss\"|eval_loss)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)")
 SAFETY_PENALTY_RE = re.compile(r"Safety penalty\s*:\s*(n/a|[-+]?[0-9.]+)")
 GOAL_PROGRESS_REWARD_RE = re.compile(r"Goal progress reward\s*:\s*(n/a|[-+]?[0-9.]+)")
@@ -54,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-file", default=str(FIXED_PROMPT_PATH))
     parser.add_argument("--max-trials", type=int, default=24)
     parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("--rank-values", default="8,16,32,48,64,96,128")
+    parser.add_argument("--rank-values", default="16,32,48,64")
     parser.add_argument("--rank-patience", type=int, default=1)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -70,7 +68,7 @@ def ensure_layout() -> None:
     RUN_ROOT.mkdir(parents=True, exist_ok=True)
     if not RESULTS_TSV.exists():
         RESULTS_TSV.write_text(
-            "trial_id\tstage\tprompt_file\ttarget_modules\tlora_r\tlora_alpha\tlora_dropout\tlearning_rate\twarmup_ratio\teval_loss\tsafety_penalty\tgoal_progress_reward\tmean_l2_m\tstatus\tdescription\trun_log\toutput_dir\n"
+            "trial_id\tstage\tprompt_file\ttarget_modules\tlora_r\tlora_alpha\tlora_dropout\tlearning_rate\twarmup_ratio\teval_loss\tsafety_penalty\tgoal_progress_reward\tstatus\tdescription\trun_log\toutput_dir\n"
         )
 
 
@@ -172,17 +170,15 @@ def parse_optional_float(matches: list[str]) -> float | None:
     return None if value == "n/a" else float(value)
 
 
-def parse_run_metrics(log_path: Path) -> tuple[float | None, float | None, float | None, float | None]:
+def parse_run_metrics(log_path: Path) -> tuple[float | None, float | None, float | None]:
     text = log_path.read_text(errors="replace")
     eval_loss_matches = EVAL_LOSS_RE.findall(text)
-    l2_matches = L2_RE.findall(text)
     safety_matches = SAFETY_PENALTY_RE.findall(text)
     goal_progress_matches = GOAL_PROGRESS_REWARD_RE.findall(text)
     eval_loss = float(eval_loss_matches[-1]) if eval_loss_matches else None
-    mean_l2 = parse_optional_float(l2_matches)
     safety_penalty = parse_optional_float(safety_matches)
     goal_progress_reward = parse_optional_float(goal_progress_matches)
-    return eval_loss, safety_penalty, goal_progress_reward, mean_l2
+    return eval_loss, safety_penalty, goal_progress_reward
 
 
 def append_result(row: dict[str, str]) -> None:
@@ -202,7 +198,6 @@ def append_result(row: dict[str, str]) -> None:
                 row["eval_loss"],
                 row["safety_penalty"],
                 row["goal_progress_reward"],
-                row["mean_l2_m"],
                 row["status"],
                 row["description"],
                 row["run_log"],
@@ -226,10 +221,6 @@ def run_single_trial(
     log_path = run_dir / f"{trial_id}.log"
     TEMP_TRAIN_SCRIPT.write_text(build_trial_train_script(spec, output_dir))
 
-    # train.py always reads config/llm_prompt2d.txt, so swap this fixed prompt
-    # in before each trial and restore the original file at the end of the run.
-    ACTIVE_PROMPT_PATH.write_text(spec["prompt_text"])
-
     print(f"[{index}/{total}] {trial_id}")
     print(f"  dataset : {spec['data_path']}")
     print(f"  stage   : {spec['stage']}")
@@ -246,7 +237,7 @@ def run_single_trial(
             check=False,
         )
 
-    eval_loss, safety_penalty, goal_progress_reward, mean_l2 = parse_run_metrics(log_path)
+    eval_loss, safety_penalty, goal_progress_reward = parse_run_metrics(log_path)
     if completed.returncode != 0:
         status = "crash"
     elif eval_loss is None:
@@ -274,7 +265,6 @@ def run_single_trial(
             "eval_loss": "n/a" if eval_loss is None else f"{eval_loss:.6f}",
             "safety_penalty": "n/a" if safety_penalty is None else f"{safety_penalty:.6f}",
             "goal_progress_reward": "n/a" if goal_progress_reward is None else f"{goal_progress_reward:.6f}",
-            "mean_l2_m": "n/a" if mean_l2 is None else f"{mean_l2:.6f}",
             "status": status,
             "description": description,
             "run_log": str(log_path),
@@ -284,10 +274,9 @@ def run_single_trial(
     if status == "keep":
         safety_text = "n/a" if safety_penalty is None else f"{safety_penalty:.6f}"
         progress_text = "n/a" if goal_progress_reward is None else f"{goal_progress_reward:.6f}"
-        l2_text = "n/a" if mean_l2 is None else f"{mean_l2:.6f} m"
         print(
             f"  result  : keep (eval_loss={eval_loss:.6f}, safety={safety_text}, "
-            f"goal_progress={progress_text}, mean_l2={l2_text})"
+            f"goal_progress={progress_text})"
         )
     else:
         print("  result  : crash or missing eval_loss")
@@ -299,7 +288,6 @@ def run_single_trial(
         "eval_loss": eval_loss,
         "safety_penalty": safety_penalty,
         "goal_progress_reward": goal_progress_reward,
-        "mean_l2": mean_l2,
         "run_log": str(log_path),
         "output_dir": str(output_dir),
     }
@@ -310,7 +298,6 @@ def train_best_model(*, args: argparse.Namespace, spec: dict, run_tag: str, run_
     final_output_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / f"{run_tag}_final_train.log"
     TEMP_TRAIN_SCRIPT.write_text(build_trial_train_script(spec, final_output_dir, skip_merge=False))
-    ACTIVE_PROMPT_PATH.write_text(spec["prompt_text"])
 
     print("Training final model with best hyperparameters...")
     print(f"  dataset : {spec['data_path']}")
@@ -331,12 +318,11 @@ def train_best_model(*, args: argparse.Namespace, spec: dict, run_tag: str, run_
     return completed.returncode, log_path
 
 
-def score_for_selection(result: dict) -> tuple[float, float, float, float]:
+def score_for_selection(result: dict) -> tuple[float, float, float]:
     eval_loss = result["eval_loss"] if result["eval_loss"] is not None else float("inf")
     safety_penalty = result["safety_penalty"] if result["safety_penalty"] is not None else float("inf")
     goal_progress_reward = result["goal_progress_reward"] if result["goal_progress_reward"] is not None else float("-inf")
-    mean_l2 = result["mean_l2"] if result["mean_l2"] is not None else float("inf")
-    return (eval_loss, safety_penalty, -goal_progress_reward, mean_l2)
+    return (eval_loss, safety_penalty, -goal_progress_reward)
 
 
 def is_better(candidate: dict, incumbent: dict | None) -> bool:
@@ -387,7 +373,6 @@ def main() -> int:
             preview_index += 1
         return 0
 
-    original_prompt_text = ACTIVE_PROMPT_PATH.read_text()
     best_result: dict | None = None
     final_train_log: Path | None = None
     trial_index = 1
@@ -457,7 +442,6 @@ def main() -> int:
             if final_returncode != 0:
                 print(f"Final training failed. See log: {final_train_log}")
     finally:
-        ACTIVE_PROMPT_PATH.write_text(original_prompt_text)
         if TEMP_TRAIN_SCRIPT.exists():
             TEMP_TRAIN_SCRIPT.unlink()
 
@@ -465,7 +449,6 @@ def main() -> int:
     if best_result is not None:
         safety_text = "n/a" if best_result["safety_penalty"] is None else f"{best_result['safety_penalty']:.6f}"
         progress_text = "n/a" if best_result["goal_progress_reward"] is None else f"{best_result['goal_progress_reward']:.6f}"
-        l2_text = "n/a" if best_result["mean_l2"] is None else f"{best_result['mean_l2']:.6f} m"
         print("Best hyperparameters:")
         print(f"  dataset        : {best_result['data_path']}")
         print(f"  prompt_file    : {best_result['prompt_path']}")
@@ -479,7 +462,6 @@ def main() -> int:
         print(f"  eval_loss      : {best_result['eval_loss']:.6f}")
         print(f"  safety_penalty : {safety_text}")
         print(f"  goal_progress  : {progress_text}")
-        print(f"  mean_l2        : {l2_text}")
         print(f"  run_log        : {best_result['run_log']}")
         print(f"  output_dir     : {best_result['output_dir']}")
         if final_train_log is not None:
