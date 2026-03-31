@@ -157,14 +157,14 @@ def build_trial_train_script(spec: dict, output_dir: Path, *, skip_merge: bool =
         + "".join(f'        "{module}",' + "\n" for module in spec["target_modules"])
         + "    ])"
     )
-    text, count = re.subn(
-        r'target_modules: list = field\(default_factory=lambda: \[\n(?:\s*"[^"]+",?\s*\n)+\s*\]\)',
-        target_modules_block,
-        text,
-        count=1,
-    )
-    if count != 1:
-        raise RuntimeError("Failed to patch target_modules block in trial train.py template")
+    start_marker = 'target_modules: list = field(default_factory=lambda: ['
+    start = text.find(start_marker)
+    if start == -1:
+        raise RuntimeError("Failed to locate target_modules block in trial train.py template")
+    block_end = text.find("    ])", start)
+    if block_end == -1:
+        raise RuntimeError("Failed to find end of target_modules block in trial train.py template")
+    text = text[:start] + target_modules_block + text[block_end + len("    ])"):]
     if skip_merge:
         if MERGE_BLOCK not in text:
             raise RuntimeError("Failed to locate merge block in scripts/train.py template")
