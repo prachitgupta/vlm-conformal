@@ -90,9 +90,7 @@ def parse_rank_values(raw: str) -> list[int]:
 
 def canonical_target_module_sets() -> list[tuple[str, list[str]]]:
     return [
-        ("qv_only", ["q_proj", "v_proj"]),
-        ("attention_only", ["q_proj", "k_proj", "v_proj", "o_proj"]),
-        ("mlp_only", ["gate_proj", "up_proj", "down_proj"]),
+        ("attention_plus_mlp", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]),
         ("all_linear_layers", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]),
     ]
 

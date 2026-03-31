@@ -597,6 +597,32 @@ def load_model_and_tokenizer(cfg: TrainConfig):
     return model, tokenizer
 
 
+def log_candidate_target_modules(model, cfg: TrainConfig) -> None:
+    """Print linear module names so LoRA target matching is easy to debug."""
+    linear_names: list[str] = []
+    matched_names: list[str] = []
+    target_set = set(str(name) for name in cfg.target_modules)
+
+    for module_name, module in model.named_modules():
+        class_name = module.__class__.__name__.lower()
+        if "linear" not in class_name:
+            continue
+        linear_names.append(module_name)
+        leaf_name = module_name.rsplit(".", 1)[-1]
+        if leaf_name in target_set:
+            matched_names.append(module_name)
+
+    log.info("Configured target_modules: %s", list(cfg.target_modules))
+    log.info("Matched linear modules for configured targets: %d", len(matched_names))
+    for name in matched_names[:80]:
+        log.info("  matched: %s", name)
+    if not matched_names:
+        log.warning("No linear modules matched the configured target_modules.")
+
+    unique_leaf_names = sorted({name.rsplit(".", 1)[-1] for name in linear_names})
+    log.info("Available linear leaf module names (sample): %s", unique_leaf_names[:80])
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 6: LORA ADAPTER INJECTION
 #
@@ -622,6 +648,7 @@ def load_model_and_tokenizer(cfg: TrainConfig):
 def apply_lora(model, cfg: TrainConfig):
     """Inject LoRA adapters into the model."""
     log.info(f"Applying LoRA: rank={cfg.lora_r}, alpha={cfg.lora_alpha}")
+    log_candidate_target_modules(model, cfg)
 
     model = FastLanguageModel.get_peft_model(
         model,
