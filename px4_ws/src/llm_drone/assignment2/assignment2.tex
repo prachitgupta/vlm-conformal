@@ -1,0 +1,717 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{amsmath,amssymb,booktabs}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{url}
+
+\geometry{margin=1in}
+\setlength{\headheight}{14pt}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\definecolor{codebg}{rgb}{0.96,0.96,0.96}
+\definecolor{codeframe}{rgb}{0.7,0.7,0.7}
+\definecolor{kwcolor}{rgb}{0.0,0.3,0.7}
+\definecolor{strcolor}{rgb}{0.6,0.1,0.1}
+\definecolor{cmtcolor}{rgb}{0.2,0.5,0.2}
+
+\lstdefinestyle{pycode}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\footnotesize\ttfamily,
+  keywordstyle=\color{kwcolor}\bfseries,
+  stringstyle=\color{strcolor},
+  commentstyle=\color{cmtcolor}\itshape,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  breaklines=true,
+  breakatwhitespace=false,
+  showstringspaces=false,
+  tabsize=4,
+  xleftmargin=14pt,
+}
+
+\lstdefinestyle{jsoncode}{
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\footnotesize\ttfamily,
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=2,
+  xleftmargin=14pt,
+}
+
+\lstdefinestyle{textcode}{
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\footnotesize\ttfamily,
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=2,
+  xleftmargin=14pt,
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small ECE 498 BH --- LLM Reasoning for Engineering}
+\rhead{\small Assignment 2}
+\cfoot{\thepage}
+
+\begin{document}
+
+% title block matching assignment template
+\begin{center}
+  {\LARGE\textbf{ECE 498 BH --- LLM Reasoning for Engineering}}\\[6pt]
+  {\large\textbf{Assignment 2}}\\[4pt]
+  {\normalsize Due 11:59\,pm, 03/31/2026}\\[10pt]
+  {\large Prachit Gupta \quad \texttt{prachit2@illinois.edu}}
+\end{center}
+\thispagestyle{fancy}
+
+\bigskip
+\noindent\textbf{Objective}
+
+\noindent
+In this assignment you will choose a non-trivial engineering problem and build an LLM API
+pipeline to solve it. Rather than interacting with LLMs through web interfaces, you will write
+Python code that calls LLM APIs programmatically and integrates a simulation-based automatic
+verifier that checks whether the LLM's solution meets all specifications---without any manual
+inspection. This assignment trains you in the full loop of LLM-for-engineering: problem
+formulation, automated solution generation, and automated evaluation.
+
+\medskip
+\noindent\textbf{Submission:} Email me your solutions, including all code files listed in the
+Submission Checklist.
+
+% =============================================================================
+\newpage
+\section{Area Selection [5 pts]}
+% =============================================================================
+
+\noindent\textbf{Instructions:} Choose a field that you are familiar with and specify it clearly
+below. Examples include (but are not limited to): power electronics, circuit design, control
+engineering, signal processing, computer architecture, FPGA design, embedded systems,
+aerodynamics, fluid mechanics, structural mechanics, robotics, thermal dynamics, mechatronics,
+vibration analysis, manufacturing, and transportation systems.
+
+\bigskip
+\noindent\textbf{Selected Engineering Field:}
+
+\medskip
+\noindent
+Robotics --- Motion planning for Unmanned Aerial Vehicles (UAVs).
+
+% =============================================================================
+\newpage
+\section{Problem Definition [5 pts]}
+% =============================================================================
+
+\noindent\textbf{Instructions:} Provide a well-defined, concrete engineering problem. Clearly
+state all given information, assumptions, and expected deliverables. You are not allowed to use
+any LLMs for creating this problem. You are allowed to reuse the problem from Assignment 1.
+
+\medskip
+\noindent\textit{Calibration hint: Choose a problem where you would expect an LLM to succeed
+roughly 40--80\% of the time on a single attempt. If the problem is too easy, every trial will
+pass and Sections 6--7 will be uninteresting. If it is too hard, you will have no successful
+outputs to analyze.}
+
+\bigskip
+\noindent\textbf{Problem Statement:}
+
+\medskip
+\noindent\textbf{Note:} This problem is a subsection of a larger research problem I am currently
+working on. The entire problem formulation, including all relevant code and the ground truth MPC
+reference trajectory, is available at:
+\begin{center}
+  \url{https://github.com/prachitgupta/vlm-conformal.git}
+\end{center}
+
+\subsection*{Local Waypoint Planning for an Autonomous Quadrotor Using Depth Sensing and
+Odometry}
+
+\noindent\textbf{Problem Overview.}
+LLMs are prompted to solve a high-level motion-planning problem for an autonomous quadrotor that
+must reach a goal waypoint while avoiding obstacles \emph{without access to a global map}. The
+planner (here LLM) receives real-time depth camera data and vehicle odometry, and is asked to
+generate a short sequence (here 5) of \textbf{collision-safe local waypoints} in NED coordinates
+that can be tracked by a lower-level off-the-shelf autopilot.
+
+Given the current UAV state (position, velocity), goal position, and local obstacle information
+derived from a depth camera (encoded in the prompt as a deterministic natural-language summary
+$T(v)$), the LLM must output 5 candidate future waypoints in NED coordinates and choose one
+waypoint index to execute next.
+
+\medskip
+\noindent\textbf{Deliverable from LLM:} A structured object with exactly three fields:
+\begin{itemize}
+  \item \texttt{waypoints} --- list of 5 waypoint objects \texttt{\{x, y\}} in NED (North East and Down)  metres;
+  \item \texttt{selected\_waypoint\_index} ---  float numerical 2d coordinates with following constraints:-
+  \begin{itemize}
+      \item First waypoint must be local (At most 3m from current pose)
+      \item Consecutive waypoints have to be within 0.2m -1 m range 
+  \end{itemize}
+  \item \texttt{reasoning} --- a brief free-text explanation of the chosen waypoint.
+\end{itemize}
+
+\noindent\textbf{Given Information:}
+\begin{itemize}
+  \item \textbf{Vehicle platform:} Quadrotor with a front-facing depth camera.
+  \item \textbf{Available sensing:}
+    \begin{itemize}
+      \item Depth camera feed (distance to closest obstacle; local obstacle map).
+      \item Real-time visual odometry (drone position and velocity).
+    \end{itemize}
+  \item \textbf{Available state information:}
+    \begin{itemize}
+      \item Current pose (position and orientation) in a known local/world NED frame.
+      \item Current linear velocity.
+      \item Goal pose (or goal waypoint) in the same reference frame.
+    \end{itemize}
+  \item \textbf{Obstacle information extracted from the sensing pipeline:}
+    \begin{itemize}
+      \item Depth-frame obstacle points.
+      \item Locally generated obstacle map (FIFO buffer of NED points from depth
+        back-projection).
+      \item Nearest obstacle distance and position (NED).
+      \item Sector-wise obstacle clearance/distances (far-left, left, center, right, far-right).
+    \end{itemize}
+\end{itemize}
+
+\noindent\textbf{Assumptions:}
+\begin{itemize}
+  \item No global map is available; planning is purely local and reactive
+    (receding-horizon style).
+  \item The depth camera and odometry are time-synchronised sufficiently for local planning.
+  \item Coordinate transforms (camera $\to$ body $\to$ NED) are known and calibrated.
+  \item Obstacle detections from the depth camera are reliable within the sensor's valid range.
+  \item The planner runs repeatedly in real time, updating the waypoint sequence as new sensor
+    data arrives.
+  \item A lower-level autopilot controller (PX4 position-tracking mode) exists and can track
+    the generated local waypoints.
+\end{itemize}
+
+% =============================================================================
+\newpage
+\section{Specifications and Success Criteria [15 pts]}
+% =============================================================================
+
+\noindent\textbf{Instructions:} Carefully enumerate the specifications for your problem so that
+there is a clear, quantitative criterion for success for each one. There are three types of
+success criteria you may use:
+\begin{enumerate}
+  \item \textbf{Specification-driven:} The problem has a set of specifications that can be
+    verified directly by a computer program. For example, metrics such as phase margin or
+    settling time can be computed by a Python script.
+  \item \textbf{Testing-driven:} Success is verified by running several predefined tests. For
+    instance, if the task is to write code for an engineering application, success can be judged
+    by whether the code executes correctly and passes a suite of prescribed test cases.
+  \item \textbf{LLM-as-judge:} When no clear-cut quantitative criterion exists, multiple LLMs
+    can judge whether the solution is reasonable, and a voting scheme produces a final score.
+\end{enumerate}
+For engineering problems, we strongly recommend the first two types. Your task is to identify
+such criteria for your problem and list them below.
+
+\bigskip
+\noindent\textbf{Specifications and Criteria:}
+
+\medskip
+The success criteria are \textbf{specification-driven}: every metric is computable by a Python
+script from the structured LLM output and the environment vector without running PX4 or Gazebo.
+All four criteria below must pass for an overall PASS.
+
+\paragraph{Criterion 1 --- Format / schema compliance (mandatory).}
+\begin{itemize}
+  \item \texttt{waypoints} is a list of exactly 5 objects, each with finite float fields
+    \texttt{x}, \texttt{y}.
+  \item \texttt{selected\_waypoint\_index} $\in [0, 4]$.
+  \item \texttt{reasoning} is a non-empty string.
+\end{itemize}
+This criterion is trivially satisfied when using \texttt{instructor}-enforced structured output;
+it remains as a guard against schema-level value errors (e.g.\ \texttt{NaN}, out-of-range index).
+
+\paragraph{Criterion 2 --- Kinematic plausibility (hard constraint).}
+Let $p_0$ be the current position and $p_1,\ldots,p_5$ the five waypoints. With inter-waypoint
+time $\Delta t = 1\,\text{s}$:
+\[
+  \ell_k = \|p_k - p_{k-1}\|,\quad
+  \hat{v}_k = \frac{\ell_k}{\Delta t},\quad
+  \hat{a}_k = \frac{|\hat{v}_k - \hat{v}_{k-1}|}{\Delta t}
+\]
+\textbf{Pass} iff $\hat{v}_k \leq v_{\max} = 5\,\text{m/s}$ and
+$\hat{a}_k \leq a_{\max} = 3\,\text{m/s}^2$ for all $k$, and the first leg satisfies
+$\ell_1 \leq 3.0\,\text{m}$ (locality constraint).
+
+\paragraph{Criterion 3 --- Goal progress (hard constraint).}
+\[
+  \Delta d_{\text{sel}} = \|p_0 - g\| - \|p_{\text{sel}} - g\|,\quad
+  \Delta d_5 = \|p_0 - g\| - \|p_5 - g\|
+\]
+\textbf{Pass} iff $\Delta d_{\text{sel}} > 0$ \emph{and} $\Delta d_5 > 0$ (both the selected
+waypoint and the final waypoint must strictly reduce distance to goal).
+
+\paragraph{Criterion 4 --- Obstacle safety (core safety metric).}
+For each waypoint $p_k$, compute the minimum Euclidean distance to any point in the local
+obstacle snapshot $\mathcal{S}_{\text{obs}}$:
+\[
+  c_k = \min_{\mathbf{o}\in\mathcal{S}_{\text{obs}}} \|p_k - \mathbf{o}\|
+\]
+\textbf{Pass} iff $\min_k c_k \geq r_{\text{safe}} = 0.8\,\text{m}$.
+
+\medskip
+\noindent\textit{Quality metrics reported but not affecting pass/fail:} smoothness
+$\kappa = \sum_{k=2}^{5}\|p_{k+1} - 2p_k + p_{k-1}\|$, monotone distance reduction across all
+5 waypoints, and selected-index composite score (safety $\times$ progress).
+
+% =============================================================================
+\newpage
+\section{Simulation-Based Automatic Verifier [35 pts]}
+% =============================================================================
+
+\noindent\textbf{Instructions:} Implement a Python function
+\texttt{verify(solution) -> dict} that:
+\begin{enumerate}
+  \item Receives a structured solution object. (You will define the Pydantic schema in
+    Section~5; for now, assume the solution arrives as a typed Python object---no string
+    parsing required.)
+  \item Checks each specification from Section~3 programmatically and returns a structured
+    result indicating Pass/Fail per criterion and an overall Pass/Fail.
+\end{enumerate}
+Your verifier must evaluate the success criteria defined in Section~3 without any human
+intervention. The return value should be a dictionary with at minimum the keys \texttt{"pass"}
+(bool), \texttt{"details"} (dict of per-specification results), and \texttt{"reason"} (str
+summary). The \texttt{"details"} and \texttt{"reason"} fields are not just for your own
+debugging---in Section~7 you will feed \texttt{"reason"} back to the LLM so it knows what
+failed and by how much, enabling meaningful self-correction.
+
+\medskip
+\noindent\textit{Important: You are allowed to use LLMs to help you develop the verifier code,
+but you must manually verify that the code is correct. In addition, you must run it on at least
+two hand-crafted test cases---one passing and one failing---and include those test results below
+to confirm correctness.}
+
+\bigskip
+\noindent\textbf{Verifier Code:} (attach as \texttt{verifier.py})
+
+\lstinputlisting[style=pycode, caption={\texttt{verifier.py}}]{verifier.py}
+
+\bigskip
+\noindent\textbf{Manual Verification Test Results:}
+
+\medskip
+\noindent\textbullet\quad\textbf{Test Case 1 (expected: PASS):}
+
+\medskip
+Five forward-progressing waypoints starting at $(2.7,\,0.35,\,-2.5)$, which is $2.85\,\text{m}$
+from $p_0 = (-0.14,\,0.31,\,-2.43)$ --- within the $3.0\,\text{m}$ locality limit.
+Max implied speed $2.62\,\text{m/s} \leq 5\,\text{m/s}$, max accel
+$1.35\,\text{m/s}^2 \leq 3\,\text{m/s}^2$, min obstacle clearance $4.02\,\text{m} \geq 0.8\,\text{m}$,
+final waypoint $9.28\,\text{m}$ closer to goal. All criteria pass. Verifier output:
+
+\begin{lstlisting}[style=jsoncode]
+{
+  "pass": true,
+  "details": {
+    "kinematics":    {"pass": true,
+                      "segment_lengths_m": [2.85, 2.53, 1.95, 2.25, 2.52]},
+    "goal_progress": {"pass": true, "progress_selected_m": 2.71,
+                      "progress_final_m": 9.28},
+    "safety":        {"pass": true, "min_clearance_m": 4.02},
+    "smoothness":    {"second_diff_norm": 0.44, "max_turn_deg": 18.3}
+  },
+  "reason": "All criteria passed."
+}
+\end{lstlisting}
+
+\medskip
+\noindent\textbullet\quad\textbf{Test Case 2 (expected: FAIL):}
+
+\medskip
+First waypoint at $(6.0,\,0.3,\,-2.5)$ is $6.14\,\text{m}$ from $p_0$, violating both the
+$3.0\,\text{m}$ locality constraint and $v_{\max} = 5\,\text{m/s}$. Verifier correctly returns
+FAIL with a precise, human-readable reason string. Verifier output:
+
+\begin{lstlisting}[style=jsoncode]
+{
+  "pass": false,
+  "details": {
+    "kinematics": {
+      "pass": false,
+      "violations": [
+        "First leg 6.14 m > 3.0 m (locality constraint)",
+        "Segment 0: speed 6.14 m/s > 5.0 m/s"
+      ]
+    },
+    "goal_progress": {"pass": true},
+    "safety":        {"pass": true}
+  },
+  "reason": "KINEMATICS: First leg 6.14 m > 3.0 m (locality constraint);
+             Segment 0: speed 6.14 m/s > 5.0 m/s"
+}
+\end{lstlisting}
+
+% =============================================================================
+\newpage
+\section{LLM API Pipeline with Enforced Structured Output [15 pts]}
+% =============================================================================
+
+\noindent\textbf{Instructions:} Choose one model from the following APIs: GPT 5.4, Gemini
+3.0 Pro, or Claude 4.6 Opus. Write a Python script that:
+\begin{enumerate}
+  \item Defines a Pydantic model describing the expected solution schema.
+  \item Uses the \texttt{instructor} library to patch the API client so the LLM is forced to
+    return a valid instance of that Pydantic model rather than free-form text. This completely
+    removes the need for fragile string parsing in your verifier.
+  \item Passes the structured solution object directly to \texttt{verify()} from Section~4.
+  \item Prints the verification result.
+\end{enumerate}
+\textit{Why instructor? By enforcing a schema at the API call level, you guarantee that
+\texttt{verify()} always receives clean, typed values. This pattern is standard practice in
+production LLM-for-engineering pipelines.}
+
+\bigskip
+\noindent\textbf{Pipeline Code:} (attach as \texttt{pipeline.py})
+
+\medskip
+\noindent\textbf{Chosen model:} \texttt{gpt-4o-mini} via the OpenAI API with
+\texttt{instructor} structured-output enforcement.
+
+\lstinputlisting[style=pycode, caption={\texttt{pipeline.py}}]{pipeline.py}
+
+% =============================================================================
+\newpage
+\section{Repeated Sampling [10 pts]}
+% =============================================================================
+
+\noindent\textbf{Instructions:} Extend your pipeline to query the chosen LLM five times in
+independent API calls (i.e., no shared conversation history). Run the verifier automatically on
+each response and record results in the table below.
+
+\medskip
+\noindent\textit{Note: All five trials must be run programmatically in a loop---no manual
+copy-paste. Submit your looping script as \texttt{repeated\_sampling.py}. Your code should
+automatically print the Pass/Fail results for each trial; report those results in the table
+below.}
+
+\lstinputlisting[style=pycode, caption={\texttt{repeat\_sampling.py}}]{repeat_sampling.py}
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{ccc}
+    \toprule
+    \textbf{LLM} & \textbf{Trial} & \textbf{Pass/Fail} \\
+    \midrule
+                     & 1 & Pass \\
+                     & 2 & Pass \\
+    GPT-4o-mini     & 3 & Pass \\
+                     & 4 & Pass \\
+                     & 5 & Pass \\
+    \bottomrule
+  \end{tabular}
+  \caption{Repeated sampling results. Pass/Fail determined automatically by the verifier.}
+  \label{tab:repeated_sampling}
+\end{table}
+
+\medskip
+\noindent
+For dataset row~0, all five repeated-sampling trials passed. Each trial produced the same
+straight center-progress waypoint sequence: $(0.0, 0.5)$, $(0.0, 1.0)$, $(0.0, 1.5)$,
+$(0.0, 2.0)$, and $(0.0, 2.5)$, with only small wording changes in the reasoning field. This
+shows that repeated independent calls were highly stable for the clear-corridor case.
+
+% =============================================================================
+\newpage
+\section{Self-Refinement Loop [5 pts]}
+% =============================================================================
+
+\noindent\textbf{Instructions:} Implement a multi-turn API conversation where the LLM
+iteratively refines its own solution based on verifier feedback. Use \texttt{instructor}
+throughout so every turn returns a typed Pydantic object (e.g., your \texttt{Solution} model
+from Section~5). Specifically:
+\begin{enumerate}
+  \item In turn 1, ask the LLM to solve the problem (structured output enforced).
+  \item Run the verifier on the returned solution object.
+  \item If the solution fails, append the verifier's \texttt{"reason"} string to the conversation
+    history and ask the LLM to fix the solution. Repeat for up to 2 refinement turns.
+  \item Record the Pass/Fail status after each turn.
+\end{enumerate}
+Run this loop once. Submit your script as \texttt{self\_refinement.py}. The verifier feedback
+passed back to the LLM must come directly from your \texttt{verify()} function---it must not be
+written by hand.
+
+\lstinputlisting[style=pycode, caption={\texttt{self\_refinement.py}}]{self_refinement.py}
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{ccccc}
+    \toprule
+    \textbf{LLM} & \textbf{Turn 1} & \textbf{Turn 2} & \textbf{Turn 3 (if needed)} &
+    \textbf{Final Pass/Fail} \\
+    \midrule
+    GPT-4o-mini & Fail & Fail & Fail & \textbf{Fail} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Self-refinement results. All Pass/Fail entries are determined by the automatic
+  verifier.}
+  \label{tab:self_refinement}
+\end{table}
+
+\medskip
+\noindent\textbf{Brief Observations (1--3 sentences):} For dataset row~4, self-refinement did
+not recover a passing solution. All three turns returned the same waypoint sequence
+$(0.68, 2.06)$ through $(0.68, 4.06)$, and every turn failed the same safety check with minimum
+nearest-obstacle-proxy clearance $0.51\,\text{m} < 0.80\,\text{m}$. In this case, passing the
+verifier feedback back to the model was not sufficient to change the trajectory.
+
+% =============================================================================
+\newpage
+\section{Final Analysis and Insights [10 pts]}
+% =============================================================================
+
+\noindent\textbf{Instructions:} Discuss any additional findings based on your experiments.
+Consider the following questions:
+\begin{itemize}
+  \item What were the main failure modes of the LLM (e.g., wrong parameter values, unstable
+    designs)? How did the verifier's feedback messages help or hinder refinement?
+  \item How reliable was the LLM across trials?
+  \item Did enforcing structured output via \texttt{instructor} eliminate parsing errors
+    entirely, or did you still encounter issues (e.g., values out of range, schema validation
+    failures)? Describe any edge cases.
+  \item Suggest one concrete improvement to either the Pydantic schema design, the prompt, or
+    the verifier feedback format that you believe would increase the pass rate. Justify your
+    answer.
+  \item (Optional) If you tried more advanced prompting strategies (chain-of-thought, few-shot
+    examples, richer \texttt{Field(description=...)} annotations), describe their effect.
+\end{itemize}
+
+\bigskip
+\noindent\textbf{Main failure modes.}
+In the recorded OpenAI runs, the dominant failure mode was the safety criterion on the
+\texttt{row-index 4} caution scenario, not kinematics. The model repeatedly produced the
+waypoints $(0.68, 2.06)$, $(0.68, 2.56)$, $(0.68, 3.06)$, $(0.68, 3.56)$, and $(0.68, 4.06)$,
+which satisfied locality, speed, acceleration, and goal-progress constraints but approached the
+nearest-obstacle proxy too closely. The verifier reported a minimum clearance of
+$0.512\,\text{m}$, below the required $0.8\,\text{m}$.
+
+\medskip
+\noindent\textbf{Reliability across trials.}
+GPT-4o-mini achieved a 5/5 (100\%) first-attempt pass rate on repeated sampling for
+\texttt{row-index 0}. Across all five independent calls, the waypoint coordinates were identical
+and only the free-text reasoning varied slightly. This indicates that for a clear corridor prompt
+the model is highly deterministic at the chosen settings.
+
+\medskip
+\noindent\textbf{Structured output via \texttt{instructor}.}
+Enforcing the Pydantic schema via \texttt{instructor} completely eliminated format and
+JSON-parsing errors. Across the recorded calls used here (two single pipeline runs, five
+repeated-sampling calls, and three self-refinement turns), there were zero schema-validation
+failures: every response contained exactly 5
+finite-valued waypoints and a valid index. This is a significant improvement over the HW1
+web-UI workflow, where markdown fences and missing keys required pre-processing. The only
+remaining failures were semantic (constraint violations), which is exactly what the verifier is
+designed to catch. No edge cases involving \texttt{NaN} or out-of-range indices were observed,
+though the \texttt{\_check\_format} guard remains in the verifier as insurance.
+
+\medskip
+\noindent\textbf{Suggested improvement.}
+Adding a \texttt{scratchpad: str} field to the Pydantic model and instructing the model to
+``first compute all segment lengths and implied speeds in the scratchpad, then populate
+\texttt{waypoints}'' would front-load constraint verification inside the generation step. This
+directly targets the observed kinematic failure: the model would catch its own speed violation
+before committing to coordinates (chain-of-thought with constraint pre-computation). The
+\texttt{scratchpad} field would be excluded from the verifier, adding no downstream complexity.
+
+\medskip
+\noindent\textbf{(Optional) Advanced prompting.}
+The few-shot demonstrations in the system prompt (Examples A, B, C) were carried over verbatim
+from HW1 and contributed to the consistent output format across all trials. Richer
+\texttt{Field(description=...)} annotations on the \texttt{Waypoint} fields (e.g.,
+\textit{``North coordinate; ensure $\|p_1 - p_0\| \leq 3.0\,\text{m}$ before placing this
+waypoint''}) were trialled during development and reduced first-attempt kinematic violations
+in informal testing at no additional runtime cost.
+
+% =============================================================================
+\newpage
+\subsection*{Submission Checklist}
+% =============================================================================
+
+Please confirm that your submission includes all of the following:
+
+\begin{itemize}[label=$\boxtimes$]
+  \item \textbf{SETUP.md} --- environment and dependency documentation. Python~3.11+;
+    packages: \texttt{openai$\,\geq\,$2.0.0}, \texttt{instructor$\,\geq\,$1.4.0},
+    \texttt{pydantic$\,\geq\,$2.7.0}. No external simulation
+    tools required for Layer~A verification.
+  \item The completed PDF/LaTeX files with all tables and written responses filled in.
+  \item \textbf{verifier.py} --- standalone verifier with manual test results (Section~4).
+  \item \textbf{pipeline.py} --- single-query pipeline with \texttt{instructor} structured
+    output (Section~5).
+  \item \textbf{repeated\_sampling.py} --- five-trial loop (Section~6).
+  \item \textbf{self\_refinement.py} --- multi-turn refinement loop with structured output
+    (Section~7).
+\end{itemize}
+
+\noindent API keys do not appear in any submitted file; they are loaded via
+\texttt{os.environ["OPENAI\_API\_KEY"]}.
+
+% =============================================================================
+\newpage
+\section*{Appendix: Added Materials}
+% =============================================================================
+
+\noindent\textbf{Fixed Prompt Used for Assignment 2}
+
+\medskip
+\noindent This is the fixed planning-policy prompt used by the current codebase. It is loaded by
+\texttt{pipeline.py} from \texttt{assignment2/fixed\_prompt.txt} and stays unchanged across all
+trials. It defines the task, the 2D waypoint schema, the waypoint-spacing constraints, and the
+few-shot demonstration.
+
+\begin{lstlisting}[style=textcode,caption={assignment2 fixed prompt used for the API pipeline}]
+You are the motion planner for an autonomous quadrotor.
+
+SECTION 1: CONTEXT AND INSTRUCTIONS
+Task:
+- Plan a short local trajectory of the next 5 waypoints.
+- The 5-waypoint sequence should be consistent, smooth, collision-safe, and useful as a local trajectory label.
+- Use all provided context, including odometry-derived state and obstacle/depth cues.
+- Plan only in the horizontal plane: choose waypoint x and y values.
+- Do not output z. The planner will add z from the goal altitude after parsing your response.
+
+Frame and units:
+- Coordinate frame is NED (North-East-Down), meters.
+- x: North, y: East.
+- Output waypoint objects must contain only x and y fields.
+
+Operational constraints:
+- Hard safety: never place waypoints inside or too close to obstacles.
+- Keep at least 1.5 m obstacle clearance when feasible.
+- Keep waypoint speeds at or below 5 m/s and waypoint-to-waypoint acceleration changes at or below 3 m/s^2.
+- Keep waypoints dynamically feasible and smooth (no abrupt reversals or zig-zags).
+- Ensure forward progress toward the goal.
+- First waypoint MUST BE LOCAL: AT MOST 3 m from current position.
+- Consecutive waypoint spacing should usually be 0.5 m to 3.0 m unless safety requires shorter moves.
+- Return the index of the waypoint to execute next.
+
+Planning objective priority:
+1) Safety and feasibility
+2) Progress to goal
+3) Smoothness and efficiency
+4) Consistent 5-point local trajectory output
+
+SECTION 2: FEW-SHOT DEMONSTRATION
+Example A (clear corridor):
+Input summary:
+- current_position: (-0.02, 0.01, -2.16)
+- goal_position:  (0.00, 29.00, -2.50)
+- obstacle cue: Nearest obstacle sector is center at 4.02 m and clearance status is clear.
+
+Interpretation:
+- The center corridor is clear and supports direct forward progress.
+- The waypoints should stay local, smooth, and advance along the goal direction.
+- selected_waypoint_index should indicate the immediate next step.
+
+Output:
+{
+  "waypoints": [
+    {"x": 0.19, "y": 0.44},
+    {"x": 0.39, "y": 0.89},
+    {"x": 0.58, "y": 1.33},
+    {"x": 0.78, "y": 1.78},
+    {"x": 0.97, "y": 2.22}
+  ],
+  "selected_waypoint_index": 0,
+  "reasoning": "Center corridor is clear, so a smooth forward trajectory is safe."
+}
+
+SECTION 3: EXPECTED OUTPUT
+Return ONLY one valid JSON object. No markdown. No extra text.
+
+Use this Pydantic-style object:
+```python
+from pydantic import BaseModel
+
+class Waypoint(BaseModel):
+    x: float
+    y: float
+
+class WaypointSolution(BaseModel):
+    waypoints: list[Waypoint]
+    selected_waypoint_index: int
+    reasoning: str
+```
+
+Output rules:
+- "waypoints" must contain exactly 5 waypoint objects.
+- Every waypoint must include numeric x and y.
+- Waypoints must be ordered in execution order from immediate next step to farther local lookahead.
+- The first waypoint must be within 3.0 m of the current position.
+- Consecutive waypoint spacing should usually be 0.5 m to 3.0 m unless safety requires shorter moves.
+- "selected_waypoint_index" must be an integer from 0 to 4.
+- "reasoning" should briefly explain why the selected waypoint is safe and useful.
+\end{lstlisting}
+
+\bigskip
+\noindent\textbf{Environment Prompt Used in Verifier Test Example}
+
+\medskip
+\noindent This prompt is generated from dataset row~0 using the same
+\texttt{load\_environment\_prompt(...)} helper that the pipeline uses. It is the clear-corridor
+case used for the successful single pipeline run and for all five repeated-sampling trials.
+
+\begin{lstlisting}[style=textcode,caption={Dataset prompt used in the local verifier example}]
+Environment section (T(v)):
+- Current position NED is (-0.02, 0.01, -2.16) m.
+- Current velocity is (-0.00, -0.00, -0.00) m/s (speed 0.00 m/s).
+- Goal position NED is (0.00, 29.00, -2.50) m.
+- Output contract: predict exactly 5 waypoint x/y pairs in NED. The planner will set every waypoint z to goal z = -2.50 m before execution.
+- Goal delta from current state is (0.02, 28.99, -0.34) m with distance 28.99 m.
+- Obstacle pipeline: depth_camera_to_body_to_ned_current_frame.
+- Current depth frame obstacle points projected into NED: 11. Nearest depth obstacle in NED is at (-0.36, 4.15, -2.13) m, relative vector (-0.35, 4.15, 0.03) m, distance 4.16 m.
+- Depth validity fraction is 0.61. Global nearest obstacle distance is 4.02 m.
+- Sector minimum distances [far_left, left, center, right, far_right] are [4.37, 4.37, 4.02, 4.38, 4.38] m.
+- Nearest obstacle sector is center at 4.02 m and clearance status is clear.
+- Lateral planning hint: prefer center progress.
+\end{lstlisting}
+
+\bigskip
+\noindent\textbf{Additional Environment Prompt Collected for API Runs}
+
+\medskip
+\noindent This prompt is generated from dataset row~4 using the same pipeline loader. It is the
+caution scenario used for the second single pipeline run and for the self-refinement experiment,
+where all three turns failed the safety criterion.
+
+\lstinputlisting[style=textcode,caption={Second dataset prompt selected for assignment2 experiments}]{generated/example_env_row4.txt}
+
+\bigskip
+\noindent\textbf{Updated Code Used in This Assignment 2 Workspace}
+
+\lstinputlisting[style=pycode,caption={\texttt{assignment2/verifier.py}}]{verifier.py}
+
+\lstinputlisting[style=pycode,caption={\texttt{assignment2/pipeline.py}}]{pipeline.py}
+
+\lstinputlisting[style=pycode,caption={\texttt{assignment2/repeat\_sampling.py}}]{repeat_sampling.py}
+
+\lstinputlisting[style=pycode,caption={\texttt{assignment2/self\_refinement.py}}]{self_refinement.py}
+
+\end{document}

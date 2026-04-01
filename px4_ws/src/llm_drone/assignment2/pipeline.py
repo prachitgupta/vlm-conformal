@@ -1,142 +1,169 @@
 #!/usr/bin/env python3
-"""
-Single-query LLM pipeline with instructor-enforced structured output.
-Usage:  python pipeline.py
-Requires: ANTHROPIC_API_KEY environment variable.
-"""
-import os, json
-import anthropic
-import instructor
-from pydantic import BaseModel, Field, field_validator
-from typing import List
-from verifier import verify
+"""Single-query OpenAI pipeline for assignment 2."""
 
-# ── Pydantic schema ────────────────────────────────────────────────────────────
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import instructor
+from openai import OpenAI
+from pydantic import BaseModel, Field, field_validator
+
+from verifier import configure_scenario_from_prompt, verify
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PROMPT_FILE = Path(__file__).resolve().with_name("fixed_prompt.txt")
+DEFAULT_DATASET_CSV = REPO_ROOT / "dataset" / "dataset_merged_without_reasoning.csv"
+DEFAULT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
 
 class Waypoint(BaseModel):
-    x: float = Field(..., description="North (m) in NED frame")
-    y: float = Field(..., description="East  (m) in NED frame")
-    z: float = Field(..., description="Down  (m) in NED frame; negative = above ground")
+    x: float = Field(..., description="North displacement in metres in the NED frame")
+    y: float = Field(..., description="East displacement in metres in the NED frame")
+
 
 class WaypointSolution(BaseModel):
-    waypoints: List[Waypoint] = Field(
-        ..., min_length=5, max_length=5,
-        description="Exactly 5 collision-safe local waypoints in NED metres")
+    waypoints: list[Waypoint] = Field(
+        ...,
+        min_length=5,
+        max_length=5,
+        description="Exactly five local x/y waypoint targets in NED metres",
+    )
     selected_waypoint_index: int = Field(
-        ..., ge=0, le=4,
-        description="Index of the waypoint to execute next (0-indexed)")
-    reasoning: str = Field(
-        ..., max_length=200,
-        description="Brief explanation (<= 35 words) of the chosen waypoint")
+        ...,
+        ge=0,
+        le=4,
+        description="Index of the waypoint to execute next",
+    )
+    reasoning: str = Field(..., min_length=1, description="Short explanation of the chosen waypoint")
 
     @field_validator("waypoints")
     @classmethod
-    def check_length(cls, v):
-        if len(v) != 5:
-            raise ValueError(f"Exactly 5 waypoints required, got {len(v)}")
-        return v
+    def validate_waypoint_count(cls, value: list[Waypoint]) -> list[Waypoint]:
+        if len(value) != 5:
+            raise ValueError(f"Expected 5 waypoints, got {len(value)}")
+        return value
 
 
-# ── prompts ───────────────────────────────────────────────────────────────────
-
-SYSTEM_PROMPT = """You are the motion planner for an autonomous quadrotor.
-
-SECTION 1: CONTEXT AND INSTRUCTIONS
-Task:
-- Plan a short local trajectory of the next 5 waypoints (not just one waypoint).
-- The 5-waypoint sequence should be consistent, smooth, collision-safe, and useful
-  as a local trajectory label.
-- Use all provided context, including odometry-derived state and obstacle/depth cues.
-
-Frame and units:
-- Coordinate frame is NED (North-East-Down), meters.
-- x: North, y: East, z: Down.
-- More negative z means higher altitude above ground.
-
-Operational constraints:
-- Hard safety: never place waypoints inside or too close to obstacles.
-- Keep at least 1.5 m obstacle clearance when feasible.
-- Keep waypoints dynamically feasible and smooth (no abrupt reversals or zig-zags).
-- Prefer forward progress toward the goal.
-- First waypoint must be local: at most 3.0 m from current position.
-- Consecutive waypoint spacing should usually be 0.5 m to 3.0 m unless safety
-  requires shorter moves.
-- Respect altitude safety: keep z < 0 unless explicitly instructed otherwise.
-
-Planning objective priority:
-  1) Safety and feasibility
-  2) Progress to goal
-  3) Smoothness and efficiency
-  4) Consistent 5-point local trajectory output
-
-SECTION 2: FEW-SHOT DEMONSTRATIONS
-Example A (clear corridor):
-  current_position: [0.0, 0.0, -2.0], goal: [10.0, 0.0, -2.0], cue: clear ahead
-  -> straight 5-point trajectory toward goal.
-
-Example B (obstacle ahead, bypass right):
-  current_position: [0.0, 0.0, -2.0], goal: [10.0, 0.0, -2.0],
-  cue: near obstacle centered ahead, right side clearer
-  -> steer right, then merge back toward goal line.
-
-Example C (vertical avoidance):
-  current_position: [0.0, 0.0, -2.0], goal: [8.0, 0.0, -2.0],
-  cue: obstacle at current altitude directly ahead, vertical clearance available
-  -> smooth climb in NED (more negative z) to clear obstacle, then level back.
-
-SECTION 3: VERIFICATION LAYER (check before output)
-1) Exactly 5 waypoints with numeric x, y, z.
-2) selected_waypoint_index == 0.
-3) First waypoint within 3.0 m of current position.
-4) Smooth, feasible consecutive transitions (speed <= 5 m/s per 1 s interval).
-5) Obstacle clearance >= 0.8 m maintained.
-6) Trajectory progresses toward goal unless safety forces detour."""
-
-USER_PROMPT = """Use the fixed planning policy exactly as defined in the system prompt.
-
-Dynamic Environment Section (T(v)):
-- Current position NED is (-0.14, 0.31, -2.43) m.
-- Current velocity is (-0.01, -0.00, -0.00) m/s (speed 0.01 m/s).
-- Goal position NED is (35.00, 3.00, 2.50) m.
-- Goal delta from current state is (35.14, 2.69, 4.93) m with distance 35.59 m.
-- Nearest obstacle in NED is at (-2.86, 4.74, -4.81) m, distance 5.72 m.
-- Sector minimum distances [far_left, left, center, right, far_right]:
-  [4.80, 4.81, 4.81, 4.81, 4.82] m.
-- Nearest obstacle sector is far_left at 4.80 m; clearance status is CLEAR.
-- Lateral planning hint: prefer center progress.
-
-Numerical Environment Vector v:
-{
-  "current_position_ned_m":  [-0.14469, 0.30513, -2.42636],
-  "current_velocity_mps":    [-0.00521, -0.00432, -0.00006],
-  "goal_position_ned_m":     [35.0, 3.0, 2.5],
-  "distance_to_goal_m":      35.59,
-  "nearest_obstacle_distance_ned_m": 5.7227,
-  "nearest_obstacle_position_ned_m": [-2.8593, 4.7420, -4.8127],
-  "sector_min_m": {
-    "far_left": 4.8048, "left": 4.8075, "center": 4.8101,
-    "right":    4.8128, "far_right": 4.8155
-  },
-  "clearance_status": "clear"
-}"""
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--prompt-file", default=str(DEFAULT_PROMPT_FILE))
+    parser.add_argument("--dataset-csv", default=str(DEFAULT_DATASET_CSV))
+    parser.add_argument("--row-index", type=int, default=0)
+    parser.add_argument("--env-prompt-file", default="")
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--temperature", type=float, default=0.1)
+    parser.add_argument("--max-tokens", type=int, default=800)
+    parser.add_argument("--output-json", default="")
+    return parser.parse_args()
 
 
-# ── pipeline ──────────────────────────────────────────────────────────────────
+def create_client() -> instructor.Instructor:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    return instructor.from_openai(OpenAI(api_key=api_key))
 
-def run_pipeline() -> dict:
-    client = instructor.from_anthropic(
-        anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    )
-    solution: WaypointSolution = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": USER_PROMPT}],
+
+def load_fixed_prompt(prompt_file: str | Path) -> str:
+    return Path(prompt_file).expanduser().resolve().read_text(encoding="utf-8").strip()
+
+
+def load_environment_prompt(dataset_csv: str | Path, row_index: int) -> str:
+    csv_path = Path(dataset_csv).expanduser().resolve()
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for index, row in enumerate(reader):
+            if index == row_index:
+                prompt = (row.get("prompt") or "").strip()
+                if not prompt:
+                    raise ValueError(f"Dataset row {row_index} has an empty prompt")
+                return prompt
+    raise IndexError(f"Row index {row_index} is out of range for {csv_path}")
+
+
+def get_environment_prompt(args: argparse.Namespace) -> str:
+    if args.env_prompt_file:
+        return Path(args.env_prompt_file).expanduser().resolve().read_text(encoding="utf-8").strip()
+    return load_environment_prompt(args.dataset_csv, args.row_index)
+
+
+def query_solution(
+    client: instructor.Instructor,
+    *,
+    system_prompt: str,
+    messages: list[dict[str, str]],
+    model: str,
+    temperature: float,
+    max_tokens: int,
+) -> WaypointSolution:
+    return client.chat.completions.create(
+        model=model,
         response_model=WaypointSolution,
+        messages=[{"role": "system", "content": system_prompt}, *messages],
+        temperature=temperature,
+        max_tokens=max_tokens,
     )
-    result = verify(solution)
-    print(json.dumps(result, indent=2))
-    return result
+
+
+def build_run_output(
+    *,
+    model: str,
+    prompt_file: str,
+    row_index: int | None,
+    environment_prompt: str,
+    solution: WaypointSolution,
+    verification: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "model": model,
+        "fixed_prompt_file": prompt_file,
+        "dataset_row_index": row_index,
+        "environment_prompt": environment_prompt,
+        "llm_response_text": solution.model_dump_json(indent=2),
+        "solution": solution.model_dump(),
+        "verification": verification,
+    }
+
+
+def run_pipeline(args: argparse.Namespace | None = None) -> dict[str, Any]:
+    parsed = args or parse_args()
+    system_prompt = load_fixed_prompt(parsed.prompt_file)
+    environment_prompt = get_environment_prompt(parsed)
+    configure_scenario_from_prompt(environment_prompt)
+
+    client = create_client()
+    solution = query_solution(
+        client,
+        system_prompt=system_prompt,
+        messages=[{"role": "user", "content": environment_prompt}],
+        model=parsed.model,
+        temperature=parsed.temperature,
+        max_tokens=parsed.max_tokens,
+    )
+    verification = verify(solution)
+    output = build_run_output(
+        model=parsed.model,
+        prompt_file=str(Path(parsed.prompt_file).expanduser().resolve()),
+        row_index=None if parsed.env_prompt_file else parsed.row_index,
+        environment_prompt=environment_prompt,
+        solution=solution,
+        verification=verification,
+    )
+
+    if parsed.output_json:
+        output_path = Path(parsed.output_json).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+
+    print(json.dumps(output, indent=2))
+    return output
 
 
 if __name__ == "__main__":

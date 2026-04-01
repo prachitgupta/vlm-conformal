@@ -1,0 +1,77 @@
+{
+  "pass": false,
+  "details": {
+    "format": {
+      "pass": true,
+      "violations": []
+    },
+    "kinematics": {
+      "pass": false,
+      "segment_lengths_m": [
+        6.027,
+        3.231,
+        3.041,
+        3.027,
+        3.027
+      ],
+      "implied_speeds_mps": [
+        6.027,
+        3.231,
+        3.041,
+        3.027,
+        3.027
+      ],
+      "implied_accels_mps2": [
+        2.796,
+        0.19,
+        0.015,
+        0.0
+      ],
+      "violations": [
+        "First leg 6.03 m exceeds locality limit 3.00 m",
+        "Segment 0: speed 6.03 m/s exceeds 5.00 m/s"
+      ]
+    },
+    "goal_progress": {
+      "pass": false,
+      "d0_m": 28.99,
+      "d_selected_m": 29.32,
+      "d_final_m": 31.787,
+      "progress_selected_m": -0.33,
+      "progress_final_m": -2.797,
+      "violations": [
+        "Selected waypoint does not reduce goal distance: 29.32 m >= 28.99 m",
+        "Final waypoint does not reduce goal distance: 31.79 m >= 28.99 m"
+      ]
+    },
+    "safety": {
+      "pass": true,
+      "min_clearance_m": 7.435,
+      "per_waypoint_clearance_m": [
+        7.435,
+        9.728,
+        12.546,
+        15.459,
+        18.41
+      ],
+      "r_safe_m": 0.8,
+      "violations": []
+    },
+    "scenario": {
+      "current_position_xy": [
+        -0.02,
+        0.01
+      ],
+      "goal_position_xy": [
+        0.0,
+        29.0
+      ],
+      "nearest_obstacle_xy": [
+        -0.36,
+        4.15
+      ],
+      "obstacle_model": "nearest-obstacle proxy parsed from environment prompt"
+    }
+  },
+  "reason": "KINEMATICS: First leg 6.03 m exceeds locality limit 3.00 m; Segment 0: speed 6.03 m/s exceeds 5.00 m/s | GOAL_PROGRESS: Selected waypoint does not reduce goal distance: 29.32 m >= 28.99 m; Final waypoint does not reduce goal distance: 31.79 m >= 28.99 m"
+}
