@@ -92,6 +92,8 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 DEFAULT_OUTPUT_DIR = (Path(__file__).resolve().parents[1] / "models" / "drone_planner_checkpoints").resolve()
+DEFAULT_TRAIN_PROMPT_PATH = (Path(__file__).resolve().parents[1] / "config" / "variant_X.txt").resolve()
+DEFAULT_TRAIN_DATA_PATH = (Path(__file__).resolve().parents[1] / "dataset" / "dataset_variant_x_reasoning.csv").resolve()
 
 CURRENT_POS_RE = re.compile(
     r"Current position NED is \(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\) m\.",
@@ -171,7 +173,7 @@ class TrainConfig:
     # in your waypoint coordinates.
 
     # --- Data ---
-    data_path: str = str((Path(__file__).resolve().parents[1] / "dataset" / "offline_ground_truth_dataset.csv"))
+    data_path: str = str(DEFAULT_TRAIN_DATA_PATH)
     # Supported inputs:
     # - offline_ground_truth_dataset.csv from dataset_generator_executor.py
     # - raw dataset.csv from dataset_generator_sync.py
@@ -260,10 +262,8 @@ def resolve_repo_relative_path(path_str: str) -> Path:
 def resolve_system_prompt_path(prompt_override: str | None) -> Path:
     if prompt_override:
         prompt_path = resolve_repo_relative_path(prompt_override)
-    elif "resolve_prompt_file" in globals():
-        prompt_path = resolve_prompt_file(DATASET_PROMPT_FILENAME)
     else:
-        prompt_path = (REPO_ROOT / "config" / DATASET_PROMPT_FILENAME).resolve()
+        prompt_path = DEFAULT_TRAIN_PROMPT_PATH
 
     if not prompt_path.exists():
         raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
@@ -272,7 +272,7 @@ def resolve_system_prompt_path(prompt_override: str | None) -> Path:
 
 def load_system_prompt_override(prompt_override: str | None) -> str:
     if not prompt_override:
-        return load_system_prompt(DATASET_PROMPT_FILENAME)
+        return DEFAULT_TRAIN_PROMPT_PATH.read_text()
     prompt_path = resolve_system_prompt_path(prompt_override)
     return prompt_path.read_text()
 
@@ -422,6 +422,17 @@ def validate_completion(completion_str: str) -> bool:
     if reasoning is not None and not isinstance(reasoning, str):
         return False
 
+    plan_trace = data.get("plan_trace", None)
+    if plan_trace is not None:
+        if not isinstance(plan_trace, dict):
+            return False
+        observation = plan_trace.get("observation", None)
+        trace_reasoning = plan_trace.get("reasoning", None)
+        if observation is not None and not isinstance(observation, str):
+            return False
+        if trace_reasoning is not None and not isinstance(trace_reasoning, str):
+            return False
+
     evaluation = data.get("evaluation", None)
     if evaluation is not None and not isinstance(evaluation, dict):
         return False
@@ -440,8 +451,14 @@ def normalize_completion_for_training(completion_str: str) -> str:
             {"x": float(wp["x"]), "y": float(wp["y"])}
             for wp in data["waypoints"]
         ],
-        "reasoning": str(data.get("reasoning", "")).strip(),
     }
+    if "plan_trace" in data and isinstance(data["plan_trace"], dict):
+        normalized["plan_trace"] = {
+            "observation": str(data["plan_trace"].get("observation", "")).strip(),
+            "reasoning": str(data["plan_trace"].get("reasoning", "")).strip(),
+        }
+    else:
+        normalized["reasoning"] = str(data.get("reasoning", "")).strip()
     return json.dumps(normalized, separators=(",", ":"))
 
 

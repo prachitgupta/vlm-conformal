@@ -1,0 +1,250 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=0.6in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{pdflscape}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{float}
+
+\hypersetup{colorlinks=true,linkcolor=blue!60!black,urlcolor=blue!60!black}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{Results-Only Comparison of Models and Prompt Variants\\Using \code{resource/results\_variants.txt}}
+\author{}
+\date{April 1, 2026}
+
+\begin{document}
+\maketitle
+
+\section*{How to Read This Report}
+This report is intentionally results-only. It is based on \code{resource/results\_variants.txt} and focuses on what the logged outputs show under verifier-style criteria:
+\begin{itemize}
+  \item waypoint-count correctness,
+  \item local progress toward the goal,
+  \item kinematic plausibility at a qualitative level,
+  \item obstacle-aware behavior in the right-obstacle case,
+  \item and consistency across prompt variants.
+\end{itemize}
+
+Because the logged responses do not include \code{selected\_waypoint\_index}, and some entries are truncated or malformed, the cells below use qualitative judgments instead of strict numeric verifier pass/fail labels.
+
+\section*{Prompt Legend}
+\begin{enumerate}
+  \item \code{01}: baseline full
+  \item \code{02}: no reasoning, keep examples
+  \item \code{03}: no reasoning, one example
+  \item \code{04}: no reasoning, no examples
+  \item \code{05}: reasoning, no examples
+  \item \code{06}: concise with reasoning
+  \item \code{07}: concise no reasoning
+  \item \code{08}: no reasoning, center bias
+  \item \code{09}: reasoning, two examples
+  \item \code{10}: minimal waypoints only
+\end{enumerate}
+
+\section*{Cell Labels}
+\begin{itemize}
+  \item \textbf{Strong}: five waypoints, locally sensible, clear forward progress, and good task alignment.
+  \item \textbf{Good}: mostly sensible, minor issues, but still usable.
+  \item \textbf{Mixed}: some progress or correct structure, but notable semantic or stability issues.
+  \item \textbf{Weak}: poor local planning quality, wrong directional behavior, malformed output, or clear instability.
+  \item \textbf{Fail}: severe structural issue such as missing waypoint count or obviously unusable behavior.
+\end{itemize}
+
+\section*{Overall Ranking}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{p{3.2cm}p{2.1cm}p{2.1cm}Y}
+\toprule
+Model & Row 0 & Row 4 & Summary \\
+\midrule
+ChatGPT Mini & Strong & Strong & Most consistent model in the log. Stable across all prompt styles with clean 5-waypoint outputs. \\
+Qwen 14B & Good--Strong & Good--Strong & Best Qwen model in the file. Usually sensible, with some prompt brittleness and a few regressive variants. \\
+Qwen 7B untuned & Mixed & Mixed & Some usable outputs, but high prompt sensitivity and several semantically poor trajectories. \\
+Qwen 7B FT post-hoc reasoning & Mixed--Weak & Mixed & Can produce plausible plans, but very inconsistent and often non-local. \\
+Qwen 7B FT no reasoning & Weak & Weak & Least reliable family: repeated points, malformed outputs, four-waypoint failures, and unstable motion. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{landscape}
+\section*{Row 0: No-Obstacle / Clear-Path Results}
+\renewcommand{\arraystretch}{1.25}
+\begin{longtable}{p{2.6cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}}
+\toprule
+Model & \code{01} & \code{02} & \code{03} & \code{04} & \code{05} & \code{06} & \code{07} & \code{08} & \code{09} & \code{10} \\
+\midrule
+\endhead
+ChatGPT Mini &
+Strong: centered small-step rollout, clean schema, strong verifier-style progress. &
+Strong: same stable centerline behavior without reasoning field. &
+Good: mild diagonal bias but still local and forward. &
+Good: larger steps, but still straight and useful. &
+Mixed: geometry is fine, but reasoning text is internally inconsistent with the waypoints. &
+Mixed: aggressive long-horizon jumps; still forward, but less local. &
+Mixed: same long-horizon compression as 06, less local than ideal. &
+Strong: center-bias prompt behaves cleanly and predictably. &
+Strong: same strong baseline behavior with reasoning present. &
+Strong: minimal prompt still yields neat forward rollout. \\
+
+Qwen 7B untuned &
+Good: small diagonal rollout, locally plausible, but reasoning is truncated. &
+Good: similar to baseline and structurally clean. &
+Weak: starts at the obstacle coordinate; semantically suspicious for a clear-path case. &
+Mixed: valid five points, but overly coarse global-style path. &
+Weak: waypoints hug current position and reasoning is badly inconsistent/truncated. &
+Mixed: diagonal progress is plausible but drifts away from the clear center-progress hint. &
+Mixed: forward progress exists, but steps become too coarse and global. &
+Good: same usable diagonal baseline pattern. &
+Good: same geometry as baseline, but reasoning is truncated. &
+Good: short local rollout and decent progress. \\
+
+Qwen 7B FT post-hoc &
+Weak: essentially jumps to goal region immediately; not a local rollout. &
+Fail: malformed JSON plus near-goal behavior; structurally unreliable. &
+Mixed: consistent medium-range diagonal rollout, but not clearly local. &
+Weak: starts on obstacle location and then jumps to goal. &
+Weak: creeps near obstacle coordinates; poor task alignment. &
+Mixed: obstacle-anchored start then diagonal escape; not ideal for clear path. &
+Weak: giant non-local jumps in \(y\). &
+Weak: immediate jump to goal region with extra overshoot. &
+Mixed: near-goal behavior again; better than 01 but still non-local. &
+Mixed: monotone near-goal descending points; coherent but not local-planner behavior. \\
+
+Qwen 7B FT no reasoning &
+Weak: repeated identical points and truncated reasoning. &
+Weak: all waypoints collapse directly to the goal. &
+Fail: only four waypoints. &
+Strong: simple centered rollout, one of the few clean cases. &
+Weak: repeated near-static points and self-contradictory reasoning. &
+Good: local straight rollout with mild center bias. &
+Good: same stable local rollout without reasoning. &
+Weak: again collapses all waypoints to the goal. &
+Weak: tiny near-static drift and truncated reasoning. &
+Mixed: five points but adds unexpected \(z\) field and repeats current state. \\
+
+Qwen 14B &
+Strong: clean, centered, local rollout. &
+Strong: same stable centerline behavior. &
+Good: diagonal but still locally plausible. &
+Good: larger forward spacing, still valid and useful. &
+Mixed: waypoints are fine, but reasoning text reports inconsistent progress. &
+Mixed: plausible diagonal rollout, but drifts more than needed in the clear case. &
+Mixed: very long forward jumps, less local than baseline. &
+Strong: same clean baseline response. &
+Good: similar to untuned 7B diagonal rollout; usable but truncated reasoning. &
+Good: minimal prompt remains coherent, though less centered than baseline. \\
+\bottomrule
+\end{longtable}
+
+\section*{Row 4: Obstacle on Right / Obstacle-Avoidance Results}
+\begin{longtable}{p{2.6cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}p{2.35cm}}
+\toprule
+Model & \code{01} & \code{02} & \code{03} & \code{04} & \code{05} & \code{06} & \code{07} & \code{08} & \code{09} & \code{10} \\
+\midrule
+\endhead
+ChatGPT Mini &
+Strong: forward progress with mild left correction; very plausible. &
+Strong: same general behavior, slightly more spread in \(y\). &
+Mixed: stays fixed in \(x\) and barely reacts to right-side caution. &
+Weak: moves further right, opposite of the left-clearer cue. &
+Weak: same rightward drift as 04, plus unreliable reasoning. &
+Good: preserves progress and avoids large jumps, though lateral response is modest. &
+Good: forward progress is strong, but still somewhat center-locked. &
+Mixed: center-bias keeps \(x\) fixed and under-reacts to obstacle cue. &
+Good: coherent local rollout, though still conservative in lateral avoidance. &
+Strong: minimal prompt gives a clean leftward move toward center. \\
+
+Qwen 7B untuned &
+Good: small leftward correction with local progress; reasoning truncated. &
+Good: similar to baseline and usable. &
+Weak: moves right instead of left, poor obstacle response. &
+Weak: keeps moving right and outward, not away from hazard. &
+Weak: similar wrong-direction behavior plus inconsistent reasoning. &
+Mixed: plausible local spacing, but drifts right instead of left. &
+Weak: large forward leaps without convincing obstacle-aware correction. &
+Good: small leftward correction again, better than 03--07. &
+Good: same as baseline geometry, but reasoning truncated. &
+Strong: clear leftward shift toward safer side with local spacing. \\
+
+Qwen 7B FT post-hoc &
+Weak: barely moves; almost static around current state. &
+Weak: jumps to goal region near \(y \approx 29\), not local. &
+Mixed: local diagonal motion, but biased right rather than left. &
+Good: small local leftward correction, one of its better row-4 outputs. &
+Good: similar to 04, leftward and local. &
+Good: same controlled leftward arc with steady spacing. &
+Good: similar local leftward correction. &
+Weak: mostly local early points, then a huge jump to \(y=29\). &
+Strong: best row-4 behavior in this model family; local, leftward, and smooth. &
+Good: very local leftward drift, though perhaps too conservative. \\
+
+Qwen 7B FT no reasoning &
+Weak: repeated same point, little meaningful motion. &
+Mixed: valid five points, but drifts right rather than strongly left. &
+Fail: only four waypoints. &
+Mixed: local and valid, but too little reaction to the obstacle cue. &
+Weak: tiny motion and truncated reasoning; barely responsive. &
+Weak: reverses \(y\) direction and moves away from forward progress. &
+Weak: same regression in \(y\), with unexpected \(z\) fields. &
+Fail: only four waypoints. &
+Mixed: steady forward motion, but truncated reasoning and limited avoidance insight. &
+Weak: repeated same point, effectively no rollout. \\
+
+Qwen 14B &
+Strong: mild but correct leftward avoidance with local progress. &
+Strong: similar to baseline and structurally clean. &
+Mixed: moves to the right, so obstacle response is not ideal. &
+Fail: decreases \(y\), strongly regressive for the task. &
+Mixed: forward motion exists, but reasoning claims zero progress and the geometry is too center-locked. &
+Strong: strongest leftward avoidance in the log while preserving progress. &
+Strong: same as 06, slightly simpler and still very good. &
+Strong: balanced mild leftward correction, good compromise between progress and caution. &
+Strong: similar to baseline with slightly better leftward drift. &
+Strong: minimal prompt still produces a clear leftward avoidance plan. \\
+\bottomrule
+\end{longtable}
+\end{landscape}
+
+\section*{Best Prompt Variants by Model}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{p{3.1cm}p{2.4cm}p{2.4cm}Y}
+\toprule
+Model & Best row-0 prompts & Best row-4 prompts & Comment \\
+\midrule
+ChatGPT Mini & \code{01}, \code{02}, \code{08}, \code{09}, \code{10} & \code{01}, \code{02}, \code{10} & Very robust overall; minimal prompt surprisingly strong. \\
+Qwen 7B untuned & \code{01}, \code{02}, \code{08}, \code{10} & \code{01}, \code{02}, \code{08}, \code{10} & Needs careful prompt choice; one-example and no-example variants are unreliable. \\
+Qwen 7B FT post-hoc & \code{03} only marginally & \code{04}, \code{05}, \code{06}, \code{07}, \code{09}, \code{10} & Better in obstacle case than clear-path case, but still unstable. \\
+Qwen 7B FT no reasoning & \code{04}, \code{06}, \code{07} & none clearly strong & Fine-tuning appears to have hurt stability more than helped. \\
+Qwen 14B & \code{01}, \code{02}, \code{08} & \code{01}, \code{02}, \code{06}, \code{07}, \code{08}, \code{09}, \code{10} & Best open-model result in the file. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section*{Takeaways}
+\begin{itemize}
+  \item ChatGPT Mini is the strongest result in the file because it stays clean and useful across all prompt styles.
+  \item Qwen 14B is the best Qwen model and is especially good in the right-obstacle environment when given concise or lightly guided prompts.
+  \item Untuned Qwen 7B is sometimes usable, but it is too prompt-sensitive to trust broadly.
+  \item The two fine-tuned 7B models are not winning in this log. One is erratic and non-local; the other has repeated-point failures and malformed outputs.
+  \item For obstacle avoidance specifically, Qwen 14B with prompts \code{06}, \code{07}, \code{08}, \code{09}, or \code{10} looks strongest among the open models recorded here.
+\end{itemize}
+
+\section*{Compile Command}
+\begin{verbatim}
+cd /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/resource
+pdflatex -interaction=nonstopmode model_prompt_variant_comparison_report.tex
+\end{verbatim}
+
+\end{document}

@@ -5,22 +5,24 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAIN_SCRIPT = REPO_ROOT / "scripts" / "train.py"
-FIXED_PROMPT_PATH = REPO_ROOT / "config" / "variant_X_without_reasoning.txt"
-FIXED_DATASET_PATH = REPO_ROOT / "dataset" / "dataset_merged_without_reasoning.csv"
+FIXED_PROMPT_PATH = REPO_ROOT / "config" / "variant_X.txt"
+FIXED_DATASET_PATH = REPO_ROOT / "dataset" / "dataset_variant_x_reasoning.csv"
 AUTORESEARCH_ROOT = REPO_ROOT / "third_party" / "autoresearch"
 AUTORESEARCH_REMOTE = "https://github.com/karpathy/autoresearch.git"
 RUN_ROOT = AUTORESEARCH_ROOT / "llm_drone_runs"
 RESULTS_TSV = AUTORESEARCH_ROOT / "llm_drone_results.tsv"
 TEMP_TRAIN_SCRIPT = REPO_ROOT / "scripts" / "_train_auto_trial.py"
-FINAL_MODEL_DIR = REPO_ROOT / "models" / "QWEN_STUDENT_WITHOUT_REASONING"
+FINAL_MODEL_DIR = REPO_ROOT / "models" / "QWEN_STUDENT_VARIANT_X_REASONING"
 
 EVAL_LOSS_RE = re.compile(r"(?:'eval_loss'|\"eval_loss\"|eval_loss)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)")
 SAFETY_PENALTY_RE = re.compile(r"Safety penalty\s*:\s*(n/a|[-+]?[0-9.]+)")
@@ -107,6 +109,61 @@ def load_fixed_prompt(prompt_file: str) -> dict[str, str]:
     }
 
 
+def infer_prompt_schema(prompt_text: str) -> str:
+    text = str(prompt_text or "")
+    if "plan_trace" in text:
+        return "plan_trace"
+    if re.search(r'"\s*reasoning\s*"\s*:', text):
+        return "reasoning"
+    return "waypoints_only"
+
+
+def dataset_completion_schema(data_path: Path) -> str:
+    with data_path.open("r", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            raw = (row.get("label_waypoints_json") or row.get("completion") or "").strip()
+            if not raw:
+                continue
+            payload = json.loads(raw)
+            if isinstance(payload, dict) and isinstance(payload.get("plan_trace"), dict):
+                return "plan_trace"
+            if isinstance(payload, dict) and "reasoning" in payload:
+                return "reasoning"
+            return "waypoints_only"
+    return "waypoints_only"
+
+
+def ensure_dataset_matches_prompt(prompt: dict[str, str], dataset_path: Path) -> tuple[Path, str]:
+    prompt_schema = infer_prompt_schema(prompt["prompt_text"])
+    source_schema = dataset_completion_schema(dataset_path)
+    if prompt_schema == source_schema:
+        return dataset_path, source_schema
+    if prompt_schema == "waypoints_only":
+        return dataset_path, source_schema
+
+    temp_dir = Path(tempfile.gettempdir()) / "llm_drone_prompt_adapted"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "plan_trace" if prompt_schema == "plan_trace" else "reasoning"
+    output_path = temp_dir / f"{dataset_path.stem}_{suffix}.csv"
+    preprocess_script = REPO_ROOT / "scripts" / "preprocess_for_teacher.py"
+    subprocess.run(
+        [
+            sys.executable,
+            str(preprocess_script),
+            "--input-csv",
+            str(dataset_path),
+            "--output-csv",
+            str(output_path),
+            "--output-format",
+            "plan_trace" if prompt_schema == "plan_trace" else "reasoning",
+        ],
+        cwd=str(REPO_ROOT),
+        check=True,
+    )
+    return output_path, prompt_schema
+
+
 def default_trial_spec(prompt: dict[str, str]) -> dict:
     return {
         "prompt_name": prompt["prompt_name"],
@@ -145,6 +202,7 @@ def build_trial_train_script(spec: dict, output_dir: Path, *, skip_merge: bool =
         r"learning_rate: float = 1e-4": f"learning_rate: float = {spec['learning_rate']}",
         r"warmup_ratio: float = 0.05": f"warmup_ratio: float = {spec['warmup_ratio']}",
         r"output_dir: str = str\(DEFAULT_OUTPUT_DIR\)": f"output_dir: str = {str(output_dir)!r}",
+        r'DEFAULT_TRAIN_PROMPT_PATH = \(Path\(__file__\)\.resolve\(\)\.parents\[1\] / "config" / "variant_X\.txt"\)\.resolve\(\)': f"DEFAULT_TRAIN_PROMPT_PATH = Path({spec['prompt_path']!r}).resolve()",
     }
     for pattern, replacement in replacements.items():
         text, count = re.subn(pattern, replacement, text, count=1)
@@ -301,15 +359,26 @@ def run_single_trial(
 
 
 def train_best_model(*, args: argparse.Namespace, spec: dict, run_tag: str, run_dir: Path) -> tuple[int, Path]:
+    canonical_prompt = load_fixed_prompt(str(FIXED_PROMPT_PATH))
+    canonical_dataset = FIXED_DATASET_PATH.resolve()
+    canonical_dataset, canonical_schema = ensure_dataset_matches_prompt(canonical_prompt, canonical_dataset)
+    final_spec = {
+        **spec,
+        "prompt_name": canonical_prompt["prompt_name"],
+        "prompt_path": canonical_prompt["prompt_path"],
+        "prompt_text": canonical_prompt["prompt_text"],
+        "data_path": str(canonical_dataset),
+    }
     final_output_dir = FINAL_MODEL_DIR
     final_output_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / f"{run_tag}_final_train.log"
-    TEMP_TRAIN_SCRIPT.write_text(build_trial_train_script(spec, final_output_dir, skip_merge=False))
+    TEMP_TRAIN_SCRIPT.write_text(build_trial_train_script(final_spec, final_output_dir, skip_merge=False))
 
     print("Training final model with best hyperparameters...")
-    print(f"  dataset : {spec['data_path']}")
-    print(f"  prompt  : {spec['prompt_path']}")
-    print(f"  layers  : {spec['target_modules_name']} -> {', '.join(spec['target_modules'])}")
+    print(f"  dataset : {final_spec['data_path']}")
+    print(f"  prompt  : {final_spec['prompt_path']}")
+    print(f"  schema  : {canonical_schema}")
+    print(f"  layers  : {final_spec['target_modules_name']} -> {', '.join(final_spec['target_modules'])}")
     print(f"  output  : {final_output_dir}")
     print(f"  run log : {log_path}")
 
@@ -349,6 +418,7 @@ def main() -> int:
         dataset_path = (REPO_ROOT / dataset_path).resolve()
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
+    dataset_path, dataset_schema = ensure_dataset_matches_prompt(prompt, dataset_path)
     rank_values = parse_rank_values(args.rank_values)
     target_module_sets = canonical_target_module_sets()
     total_planned = len(rank_values) + len(target_module_sets)
@@ -359,6 +429,8 @@ def main() -> int:
 
     print(f"Using fixed dataset: {dataset_path}")
     print(f"Using fixed prompt: {prompt['prompt_path']}")
+    print(f"Resolved prompt schema: {infer_prompt_schema(prompt['prompt_text'])}")
+    print(f"Resolved dataset schema: {dataset_schema}")
     print(
         f"Planned up to {total_planned} LoRA trial(s): {len(rank_values)} rank trials, "
         f"then {len(target_module_sets)} target-module trials at the best rank. "
