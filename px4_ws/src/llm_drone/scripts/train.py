@@ -591,12 +591,34 @@ def load_model_and_tokenizer(cfg: TrainConfig):
     log.info(f"  Max seq length : {cfg.max_seq_length}")
     log.info(f"  4-bit quantize : {cfg.load_in_4bit}")
 
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=cfg.model_name,
-        max_seq_length=cfg.max_seq_length,
-        dtype=torch.bfloat16,   # Explicit bf16 for L40S
-        load_in_4bit=cfg.load_in_4bit,
-    )
+    load_kwargs = {
+        "model_name": cfg.model_name,
+        "max_seq_length": cfg.max_seq_length,
+        "dtype": torch.bfloat16,   # Explicit bf16 for L40S
+        "load_in_4bit": cfg.load_in_4bit,
+        # Keep the full 7B model materialized on the single training GPU.
+        # If Accelerate offloads shards to CPU/meta, Unsloth's trainer can
+        # crash later while inspecting token embeddings.
+        "device_map": {"": 0},
+        "low_cpu_mem_usage": False,
+    }
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(**load_kwargs)
+    except TypeError:
+        load_kwargs.pop("low_cpu_mem_usage", None)
+        model, tokenizer = FastLanguageModel.from_pretrained(**load_kwargs)
+
+    meta_params = [
+        name for name, param in model.named_parameters()
+        if getattr(param, "is_meta", False)
+    ]
+    if meta_params:
+        preview = ", ".join(meta_params[:10])
+        raise RuntimeError(
+            "Model still has meta-device parameters after load; "
+            "training would crash in Unsloth. "
+            f"First unresolved params: {preview}"
+        )
 
     # Qwen2.5 uses a specific pad token. Setting it explicitly prevents
     # silent tokenization bugs where padding tokens leak into the loss.
