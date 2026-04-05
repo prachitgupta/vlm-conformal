@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-file", default=str(FIXED_PROMPT_PATH))
     parser.add_argument("--max-trials", type=int, default=24)
     parser.add_argument("--python", default=sys.executable)
-    parser.add_argument("--rank-values", default="16,32,48,64")
+    parser.add_argument("--rank-values", default="16,32,48")
     parser.add_argument("--rank-patience", type=int, default=1)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
