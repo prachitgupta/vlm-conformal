@@ -195,14 +195,14 @@ def build_trial_id(index: int, spec: dict) -> str:
 def build_trial_train_script(spec: dict, output_dir: Path, *, skip_merge: bool = True) -> str:
     text = TRAIN_SCRIPT.read_text()
     replacements = {
-        r'data_path: str = str\(\(Path\(__file__\)\.resolve\(\)\.parents\[1\] / "dataset" / "offline_ground_truth_dataset\.csv"\)\)': f"data_path: str = {spec['data_path']!r}",
-        r"lora_r: int = 32": f"lora_r: int = {spec['lora_r']}",
-        r"lora_alpha: int = 64": f"lora_alpha: int = {spec['lora_alpha']}",
-        r"lora_dropout: float = 0.05": f"lora_dropout: float = {spec['lora_dropout']}",
-        r"learning_rate: float = 1e-4": f"learning_rate: float = {spec['learning_rate']}",
-        r"warmup_ratio: float = 0.05": f"warmup_ratio: float = {spec['warmup_ratio']}",
-        r"output_dir: str = str\(DEFAULT_OUTPUT_DIR\)": f"output_dir: str = {str(output_dir)!r}",
-        r'DEFAULT_TRAIN_PROMPT_PATH = \(Path\(__file__\)\.resolve\(\)\.parents\[1\] / "config" / "variant_X\.txt"\)\.resolve\(\)': f"DEFAULT_TRAIN_PROMPT_PATH = Path({spec['prompt_path']!r}).resolve()",
+        r"data_path:\s*str\s*=\s*str\(DEFAULT_TRAIN_DATA_PATH\)": f"data_path: str = {spec['data_path']!r}",
+        r"lora_r:\s*int\s*=\s*32": f"lora_r: int = {spec['lora_r']}",
+        r"lora_alpha:\s*int\s*=\s*64": f"lora_alpha: int = {spec['lora_alpha']}",
+        r"lora_dropout:\s*float\s*=\s*0\.05": f"lora_dropout: float = {spec['lora_dropout']}",
+        r"learning_rate:\s*float\s*=\s*1e-4": f"learning_rate: float = {spec['learning_rate']}",
+        r"warmup_ratio:\s*float\s*=\s*0\.05": f"warmup_ratio: float = {spec['warmup_ratio']}",
+        r"output_dir:\s*str\s*=\s*str\(DEFAULT_OUTPUT_DIR\)": f"output_dir: str = {str(output_dir)!r}",
+        r'DEFAULT_TRAIN_PROMPT_PATH\s*=\s*\(Path\(__file__\)\.resolve\(\)\.parents\[1\]\s*/\s*"config"\s*/\s*"variant_X\.txt"\)\.resolve\(\)': f"DEFAULT_TRAIN_PROMPT_PATH = Path({spec['prompt_path']!r}).resolve()",
     }
     for pattern, replacement in replacements.items():
         text, count = re.subn(pattern, replacement, text, count=1)
