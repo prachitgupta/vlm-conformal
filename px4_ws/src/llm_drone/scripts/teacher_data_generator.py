@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from pathlib import Path
 
 import instructor
@@ -18,6 +19,8 @@ DEFAULT_INPUT_CSV = REPO_ROOT / "dataset" / "dataset_merged_without_reasoning.cs
 DEFAULT_PROMPT_FILE = REPO_ROOT / "config" / "variant_X.txt"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "dataset"
 DEFAULT_OUTPUT_NAME = "teacher_dataset.csv"
+DEFAULT_QWEN_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+DEFAULT_OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 
 class Waypoint(BaseModel):
@@ -52,9 +55,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-file", default=str(DEFAULT_PROMPT_FILE))
     parser.add_argument("--output-name", default=DEFAULT_OUTPUT_NAME, help="Output CSV filename to create inside dataset/")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument("--teacher", choices=("qwen", "chatgpt"), default="qwen")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
     parser.add_argument("--api-key", default="token-abc123")
-    parser.add_argument("--model", default="Qwen/Qwen2.5-72B-Instruct")
+    parser.add_argument("--model", default="")
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--max-tokens", type=int, default=400)
     parser.add_argument("--start-row", type=int, default=0)
@@ -66,6 +70,23 @@ def load_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         return list(reader.fieldnames or []), list(reader)
+
+
+def create_client(args: argparse.Namespace) -> tuple[instructor.Instructor, str]:
+    if args.teacher == "chatgpt":
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+        model_name = args.model or DEFAULT_OPENAI_MODEL
+        return instructor.from_openai(OpenAI(api_key=api_key)), model_name
+
+    model_name = args.model or DEFAULT_QWEN_MODEL
+    return instructor.from_openai(
+        OpenAI(
+            base_url=args.base_url,
+            api_key=args.api_key,
+        )
+    ), model_name
 
 
 def main() -> int:
@@ -82,12 +103,7 @@ def main() -> int:
     if args.max_rows > 0:
         rows = rows[: args.max_rows]
 
-    client = instructor.from_openai(
-        OpenAI(
-            base_url=args.base_url,
-            api_key=args.api_key,
-        )
-    )
+    client, model_name = create_client(args)
 
     extra_fields = [
         "teacher_model",
@@ -108,7 +124,7 @@ def main() -> int:
                 raise ValueError(f"Row {index} is missing the prompt column")
 
             response = client.chat.completions.create(
-                model=args.model,
+                model=model_name,
                 response_model=PlannerOutput,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -118,7 +134,7 @@ def main() -> int:
                 max_tokens=args.max_tokens,
             )
 
-            row["teacher_model"] = args.model
+            row["teacher_model"] = model_name
             row["teacher_prompt_file"] = str(prompt_file)
             row["teacher_response_json"] = response.model_dump_json()
             # Keep the dataset directly compatible with scripts/train.py.
