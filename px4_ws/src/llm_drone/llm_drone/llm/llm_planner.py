@@ -82,7 +82,7 @@ class Waypoint2D(BaseModel):
 
 
 class PlanTrace(BaseModel):
-    what_it_saw: str
+    observation: str
     reasoning: str
 
 
@@ -763,7 +763,7 @@ class LLMTrajectoryPlanner(Node):
                     raise ValueError(f"waypoint {i} contains non-finite values")
                 llm_waypoints.append(wp_xyz)
 
-            self.get_logger().info(f"What it saw: {output.plan_trace.what_it_saw}")
+            self.get_logger().info(f"Observation: {output.plan_trace.observation}")
             self.get_logger().info(f"Reasoning: {output.plan_trace.reasoning}")
             return llm_waypoints
         except (ValueError, TypeError) as e:

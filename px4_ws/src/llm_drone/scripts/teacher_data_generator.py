@@ -29,7 +29,7 @@ class Waypoint(BaseModel):
 
 
 class PlanTrace(BaseModel):
-    what_it_saw: str
+    observation: str
     reasoning: str
 
 
