@@ -143,20 +143,20 @@ class TrainConfig:
     # the model to train on incomplete inputs and produce garbage waypoints.
 
     # --- LoRA Adapter Config ---
-    lora_r: int = 32
+    lora_r: int = 64
     # WHY 32: LoRA rank controls how many parameters are trainable.
     # rank=16 is a starting point; rank=32 gives more expressive power.
     # Your task requires learning precise floating-point coordinate generation
     # conditioned on continuous sensor values — higher rank helps here.
     # rank=64 is diminishing returns unless you have >20K examples.
 
-    lora_alpha: int = 64
+    lora_alpha: int = 128
     # WHY 64 (= 2 * rank): Alpha is a scaling factor. The effective learning
     # rate of the adapter is (alpha / rank). Keeping alpha = 2*rank is the
     # standard convention — it means the adapter's updates are scaled by 2,
     # which helps with convergence speed without instability.
 
-    lora_dropout: float = 0.05
+    lora_dropout: float = 0.03
     # WHY 0.05: Light dropout on the adapter weights. Prevents the adapters
     # from over-specializing to your training prompts at the expense of
     # generalization to new sensor configurations you haven't seen.
@@ -187,7 +187,7 @@ class TrainConfig:
     # --- Training ---
     output_dir: str = str(DEFAULT_OUTPUT_DIR)
 
-    num_train_epochs: int = 3
+    num_train_epochs: int = 4
     # WHY 3: For fine-tuning, 1-3 epochs is almost always correct.
     # More than 3 usually causes overfitting — the model starts memorizing
     # your specific training prompts rather than learning the underlying
@@ -199,19 +199,19 @@ class TrainConfig:
     # activations at seq_len=2048. Batch size 4 uses ~24-32 GB, well within
     # your 46 GB per card. Larger batches = more stable gradient estimates.
 
-    gradient_accumulation_steps: int = 4
+    gradient_accumulation_steps: int = 8
     # WHY 4: Effective batch size = per_device * gradient_accumulation * num_GPUs
     # = 4 * 4 * 2 = 32 (with both L40S cards).
     # Larger effective batches reduce gradient noise, which matters for
     # learning precise floating-point coordinate generation.
 
-    learning_rate: float = 1e-4
+    learning_rate: float = 7.5e-5
     # WHY 1e-4: Standard LoRA learning rate. Lower than full fine-tuning
     # (which uses 1e-5 to 1e-6) because LoRA adapters are small and need
     # larger relative updates. If you see loss spikes, drop to 5e-5.
     # If loss decreases too slowly, try 2e-4.
 
-    warmup_ratio: float = 0.05
+    warmup_ratio: float = 0.08
     # WHY 0.05: Gradually ramps learning rate from 0 to target over the first
     # 5% of training steps. Prevents instability at the start when the adapter
     # weights are randomly initialized and the gradient signal is noisy.
