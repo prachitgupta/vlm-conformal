@@ -29,6 +29,8 @@ import json
 from collections import deque
 from pathlib import Path as FilesystemPath
 from pydantic import BaseModel
+import threading
+import time
 try:
     from openai import OpenAI
 except ImportError:
@@ -250,6 +252,10 @@ class LLMTrajectoryPlanner(Node):
         self.goal = self.convert_goal_to_ned(goal_input, goal_frame)
         if goal_override is not None:
             self.goal = np.array(goal_override, dtype=float)
+
+        self.state_lock = threading.Lock()
+        self.execution_lock = threading.Lock()
+        self.stop_event = threading.Event()
         
         # State
         self.current_position = np.zeros(3)
@@ -270,7 +276,11 @@ class LLMTrajectoryPlanner(Node):
         self.mpc_trajectory = []
         self.pending_waypoints = deque()
         self.active_waypoint = None
+        self.command_target = None
         self.rollout_counter = 0
+        self.latest_rollout_id = 0
+        self.applied_rollout_id = 0
+        self.latest_rollout_waypoints = []
         self.completed_waypoints_in_rollout = 0
         self.active_waypoint_batch_index = None
         
@@ -316,12 +326,22 @@ class LLMTrajectoryPlanner(Node):
             self.cmd_vel_pub = self.create_publisher(
                 TwistStamped, '/fmu/in/setpoint_velocity', 10)
         
-        # Timer for LLM queries
-        update_period = 1.0 / self.get_parameter('update_rate').value
-        self.timer = self.create_timer(update_period, self.plan_trajectory)
         self.command_timer = self.create_timer(0.1, self.publish_active_command)
         if HAS_PX4_MSGS:
             self.offboard_timer = self.create_timer(0.1, self.publish_offboard_heartbeat)
+
+        self.llm_thread = threading.Thread(
+            target=self._llm_worker_loop,
+            name='llm_query_worker',
+            daemon=True,
+        )
+        self.tracking_thread = threading.Thread(
+            target=self._tracking_worker_loop,
+            name='waypoint_tracking_worker',
+            daemon=True,
+        )
+        self.llm_thread.start()
+        self.tracking_thread.start()
         
         self.get_logger().info('LLM Trajectory Planner initialized')
         self.get_logger().info(f'Goal: {self.goal}')
@@ -408,32 +428,38 @@ class LLMTrajectoryPlanner(Node):
         try:
             if msg.encoding in ('16UC1', 'mono16'):
                 depth_mm = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-                self.depth_image = depth_mm.astype(np.float32) / 1000.0
+                depth_image = depth_mm.astype(np.float32) / 1000.0
             else:
-                self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
+                depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
         except Exception as e:
             self.get_logger().error(f'Depth image conversion error: {e}')
             return
 
+        with self.state_lock:
+            self.depth_image = depth_image
+            rotation_ned_body = np.array(self.rotation_ned_body, dtype=float, copy=True)
+            current_position = np.array(self.current_position, dtype=float, copy=True)
+
         # Mirror MPC obstacle detection pipeline: depth -> body points -> NED -> FIFO local map.
-        pts_body = self.depth_to_obstacles.depth_to_body_frame(self.depth_image)
+        pts_body = self.depth_to_obstacles.depth_to_body_frame(depth_image)
         pts_body = self.depth_to_obstacles.filter_body_points(pts_body)
         pts_ned = self.depth_to_obstacles.body_to_spatial(
             pts_body,
-            self.rotation_ned_body,
-            self.current_position,
+            rotation_ned_body,
+            current_position,
         )
-        self.latest_depth_obstacles_ned = pts_ned
-        self.local_obstacle_map.update(pts_ned)
+        with self.state_lock:
+            self.latest_depth_obstacles_ned = pts_ned
+            self.local_obstacle_map.update(pts_ned)
     
     def odometry_callback(self, msg):
         """Update current state"""
-        self.current_position = np.array([
+        current_position = np.array([
             msg.pose.pose.position.y,
             msg.pose.pose.position.x,
             -msg.pose.pose.position.z
         ])
-        self.current_velocity = np.array([
+        current_velocity = np.array([
             msg.twist.twist.linear.y,
             msg.twist.twist.linear.x,
             -msg.twist.twist.linear.z
@@ -446,26 +472,33 @@ class LLMTrajectoryPlanner(Node):
             [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]],
             dtype=float,
         )
-        self.rotation_ned_body = rotation_enu_to_ned @ rotation_enu_body
+        with self.state_lock:
+            self.current_position = current_position
+            self.current_velocity = current_velocity
+            self.rotation_ned_body = rotation_enu_to_ned @ rotation_enu_body
 
     def vehicle_odometry_callback(self, msg):
         """Update current state from px4_msgs/VehicleOdometry (NED)."""
-        self.current_position = np.array([
+        current_position = np.array([
             float(msg.position[0]),
             float(msg.position[1]),
             float(msg.position[2]),
         ])
-        self.current_velocity = np.array([
+        current_velocity = np.array([
             float(msg.velocity[0]),
             float(msg.velocity[1]),
             float(msg.velocity[2]),
         ])
-        self.rotation_ned_body = self.quaternion_to_rotation_matrix(
+        rotation_ned_body = self.quaternion_to_rotation_matrix(
             float(msg.q[0]),
             float(msg.q[1]),
             float(msg.q[2]),
             float(msg.q[3]),
         )
+        with self.state_lock:
+            self.current_position = current_position
+            self.current_velocity = current_velocity
+            self.rotation_ned_body = rotation_ned_body
 
     @staticmethod
     def quaternion_to_rotation_matrix(w, x, y, z):
@@ -495,15 +528,21 @@ class LLMTrajectoryPlanner(Node):
             msg.pose.position.y,
             msg.pose.position.z
         ])
-        self.mpc_trajectory.append(mpc_point)
+        with self.execution_lock:
+            self.mpc_trajectory.append(mpc_point)
     
     def create_depth_visualization(self):
         """Create colored depth map for better LLM understanding"""
-        if self.depth_image is None:
+        with self.state_lock:
+            if self.depth_image is None:
+                return None
+            depth_image = np.array(self.depth_image, copy=True)
+
+        if depth_image is None:
             return None
         
         # Normalize depth to 0-255
-        depth_norm = cv2.normalize(self.depth_image, None, 0, 255, cv2.NORM_MINMAX)
+        depth_norm = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX)
         depth_uint8 = depth_norm.astype(np.uint8)
         
         # Apply colormap
@@ -515,13 +554,20 @@ class LLMTrajectoryPlanner(Node):
         """
         Build numerical vector v from odometry + depth for motion planning.
         """
+        with self.state_lock:
+            current_position = np.array(self.current_position, dtype=float, copy=True)
+            current_velocity = np.array(self.current_velocity, dtype=float, copy=True)
+            depth_image = None if self.depth_image is None else np.array(self.depth_image, copy=True)
+            latest_depth_obstacles_ned = np.array(self.latest_depth_obstacles_ned, dtype=float, copy=True)
+            local_obstacle_snapshot = self.local_obstacle_map.snapshot()
+
         vector = build_environment_vector(
-            position_ned=self.current_position,
-            velocity_ned=self.current_velocity,
+            position_ned=current_position,
+            velocity_ned=current_velocity,
             goal_ned=self.goal,
-            depth_image=self.depth_image,
-            latest_depth_obstacles_ned=self.latest_depth_obstacles_ned,
-            local_obstacle_snapshot=self.local_obstacle_map.snapshot(),
+            depth_image=depth_image,
+            latest_depth_obstacles_ned=latest_depth_obstacles_ned,
+            local_obstacle_snapshot=local_obstacle_snapshot,
             depth_sample_count=int(self.depth_to_obstacles.n_sample),
             waypoint_count=LLM_WAYPOINT_COUNT,
         )
@@ -530,12 +576,19 @@ class LLMTrajectoryPlanner(Node):
 
     def build_live_prompt(self):
         """Build the exact user prompt contract used in dataset generation/training."""
+        with self.state_lock:
+            current_position = np.asarray(self.current_position, dtype=float).copy()
+            current_velocity = np.asarray(self.current_velocity, dtype=float).copy()
+            depth_image = None if self.depth_image is None else np.array(self.depth_image, copy=True)
+            latest_depth_obstacles_ned = np.array(self.latest_depth_obstacles_ned, dtype=float, copy=True)
+            local_obstacle_snapshot = self.local_obstacle_map.snapshot()
+
         scene = {
-            'position': np.asarray(self.current_position, dtype=float),
-            'velocity': np.asarray(self.current_velocity, dtype=float),
-            'depth_image': self.depth_image,
-            'latest_depth_obstacles_ned': self.latest_depth_obstacles_ned,
-            'local_obstacle_snapshot': self.local_obstacle_map.snapshot(),
+            'position': current_position,
+            'velocity': current_velocity,
+            'depth_image': depth_image,
+            'latest_depth_obstacles_ned': latest_depth_obstacles_ned,
+            'local_obstacle_snapshot': local_obstacle_snapshot,
         }
         prompt_text, env_vector, env_text = build_prompt_from_scene(
             goal_ned=np.asarray(self.goal, dtype=float),
@@ -553,7 +606,8 @@ class LLMTrajectoryPlanner(Node):
     def _publish_debug_target_waypoint(self, target_position):
         """Publish the currently active LLM waypoint for visualization/debugging."""
         next_position = np.asarray(target_position, dtype=float)
-        self.llm_trajectory.append(next_position)
+        with self.execution_lock:
+            self.llm_trajectory.append(next_position)
         traj_msg = PoseStamped()
         traj_msg.header.stamp = self.get_clock().now().to_msg()
         traj_msg.header.frame_id = 'ned'
@@ -566,118 +620,190 @@ class LLMTrajectoryPlanner(Node):
     def _target_reached(self, target_position):
         """Match dataset replay semantics: hold each waypoint until the drone reaches it."""
         target = np.asarray(target_position, dtype=float)
+        with self.state_lock:
+            current_position = np.array(self.current_position, dtype=float, copy=True)
         xy_error = float(np.linalg.norm(
-            np.asarray(target[:2], dtype=float) - np.asarray(self.current_position[:2], dtype=float)
+            np.asarray(target[:2], dtype=float) - np.asarray(current_position[:2], dtype=float)
         ))
-        z_error = abs(float(target[2] - self.current_position[2]))
+        z_error = abs(float(target[2] - current_position[2]))
         acceptance_radius = float(self.get_parameter('waypoint_acceptance_radius_m').value)
         return xy_error <= acceptance_radius and z_error <= 0.50
 
-    def _load_waypoint_rollout_if_needed(self):
-        if self.pending_waypoints or self.active_waypoint is not None:
-            return
-        if self.rollout_counter > 0:
-            self.get_logger().info(
-                f'Completed rollout {self.rollout_counter} with {self.completed_waypoints_in_rollout}/{LLM_WAYPOINT_COUNT} waypoints reached. Querying next batch.'
-            )
-        llm_waypoints = self.query_llm()
-        if not llm_waypoints:
-            return
-        self.rollout_counter += 1
-        self.completed_waypoints_in_rollout = 0
-        self.active_waypoint_batch_index = None
-        self.pending_waypoints.extend(llm_waypoints)
-        self.publish_llm_trajectory_sequence(
-            llm_waypoints,
-            self.get_clock().now().to_msg(),
-        )
-        self.get_logger().info(
-            f'Loaded rollout {self.rollout_counter} with {len(llm_waypoints)} waypoints for execution'
-        )
+    def _has_depth_image(self):
+        with self.state_lock:
+            return self.depth_image is not None
 
-    def _execute_pose_tracking_rollout(self):
-        self._load_waypoint_rollout_if_needed()
-        if self.active_waypoint is not None and self._target_reached(self.active_waypoint):
-            reached = np.asarray(self.active_waypoint, dtype=float)
-            waypoint_idx = self.active_waypoint_batch_index
-            self.completed_waypoints_in_rollout += 1
-            self.get_logger().info(
-                f'Reached rollout {self.rollout_counter} waypoint {waypoint_idx}/{LLM_WAYPOINT_COUNT} '
-                f'({reached[0]:.2f}, {reached[1]:.2f}, {reached[2]:.2f})'
-            )
+    def _goal_reached(self):
+        with self.state_lock:
+            current_position = np.array(self.current_position, dtype=float, copy=True)
+        dist_to_goal = np.linalg.norm(self.goal - current_position)
+        return dist_to_goal < 0.5
+
+    def _hold_current_position(self):
+        with self.state_lock:
+            hold_target = np.array(self.current_position, dtype=float, copy=True)
+        with self.execution_lock:
             self.active_waypoint = None
             self.active_waypoint_batch_index = None
+            self.command_target = hold_target
+            self.pending_waypoints.clear()
+        return hold_target
 
-        if self.active_waypoint is None and self.pending_waypoints:
-            self.active_waypoint = np.array(self.pending_waypoints.popleft(), dtype=float, copy=True)
-            self.active_waypoint_batch_index = self.completed_waypoints_in_rollout + 1
-            self._publish_debug_target_waypoint(self.active_waypoint)
-            self.get_logger().info(
-                f'Tracking rollout {self.rollout_counter} waypoint '
-                f'{self.active_waypoint_batch_index}/{LLM_WAYPOINT_COUNT} '
-                f'({self.active_waypoint[0]:.2f}, {self.active_waypoint[1]:.2f}, {self.active_waypoint[2]:.2f})'
-            )
+    def _llm_worker_loop(self):
+        period = max(0.05, 1.0 / float(self.get_parameter('update_rate').value))
+        while not self.stop_event.is_set():
+            cycle_started = time.monotonic()
+            try:
+                self._run_llm_cycle()
+            except Exception as e:
+                self.get_logger().error(f'LLM worker loop failed: {e}')
+            sleep_s = max(0.0, period - (time.monotonic() - cycle_started))
+            self.stop_event.wait(sleep_s)
 
-        if self.active_waypoint is None and not self.pending_waypoints:
-            self._load_waypoint_rollout_if_needed()
-
-        if self.active_waypoint is None:
+    def _run_llm_cycle(self):
+        """Background LLM loop that continuously refreshes the latest waypoint rollout."""
+        if not self._has_depth_image():
+            self.get_logger().warn('Waiting for depth camera data...', throttle_duration_sec=2.0)
             return
 
-        target = np.asarray(self.active_waypoint, dtype=float)
-        xy_error = float(np.linalg.norm(target[:2] - np.asarray(self.current_position[:2], dtype=float)))
-        z_error = abs(float(target[2] - self.current_position[2]))
+        if self._goal_reached():
+            self.get_logger().info('Goal reached!', throttle_duration_sec=1.0)
+            self._hold_current_position()
+            return
+
+        output = self.query_llm()
+        if output is None:
+            return
+
+        llm_waypoints = self.extract_waypoints(output)
+        if not llm_waypoints:
+            return
+
+        stamp_msg = self.get_clock().now().to_msg()
+        with self.execution_lock:
+            self.rollout_counter += 1
+            self.latest_rollout_id = self.rollout_counter
+            self.latest_rollout_waypoints = [
+                np.array(wp, dtype=float, copy=True) for wp in llm_waypoints
+            ]
+            rollout_id = self.latest_rollout_id
+
+        self.publish_llm_trajectory_sequence(llm_waypoints, stamp_msg)
         self.get_logger().info(
-            f'Waiting for drone to reach rollout {self.rollout_counter} waypoint '
-            f'{self.active_waypoint_batch_index}/{LLM_WAYPOINT_COUNT}: '
+            f'Queued rollout {rollout_id} with {len(llm_waypoints)} waypoints from latest PlannerOutput'
+        )
+
+    def _tracking_worker_loop(self):
+        period = 0.1
+        while not self.stop_event.is_set():
+            cycle_started = time.monotonic()
+            try:
+                self._run_tracking_cycle()
+            except Exception as e:
+                self.get_logger().error(f'Waypoint tracking loop failed: {e}')
+            sleep_s = max(0.0, period - (time.monotonic() - cycle_started))
+            self.stop_event.wait(sleep_s)
+
+    def _run_tracking_cycle(self):
+        """Consume the most recent waypoint rollout without blocking on LLM inference."""
+        if self._goal_reached():
+            self.get_logger().info('Goal reached!', throttle_duration_sec=1.0)
+            self._hold_current_position()
+            return
+
+        rollout_loaded = None
+        reached = None
+        reached_idx = None
+        next_waypoint = None
+        next_waypoint_idx = None
+        with self.state_lock:
+            current_position_hold = np.array(self.current_position, dtype=float, copy=True)
+
+        with self.execution_lock:
+            if self.latest_rollout_id > self.applied_rollout_id and self.latest_rollout_waypoints:
+                self.pending_waypoints = deque(
+                    np.array(wp, dtype=float, copy=True)
+                    for wp in self.latest_rollout_waypoints
+                )
+                self.active_waypoint = None
+                self.active_waypoint_batch_index = None
+                self.completed_waypoints_in_rollout = 0
+                self.applied_rollout_id = self.latest_rollout_id
+                rollout_loaded = (self.applied_rollout_id, len(self.pending_waypoints))
+
+            active_waypoint = None if self.active_waypoint is None else np.array(
+                self.active_waypoint, dtype=float, copy=True
+            )
+
+        if active_waypoint is not None and self._target_reached(active_waypoint):
+            with self.execution_lock:
+                if self.active_waypoint is not None:
+                    reached = np.array(self.active_waypoint, dtype=float, copy=True)
+                    reached_idx = self.active_waypoint_batch_index
+                    self.completed_waypoints_in_rollout += 1
+                    self.active_waypoint = None
+                    self.active_waypoint_batch_index = None
+                    self.command_target = np.array(reached, dtype=float, copy=True)
+
+        with self.execution_lock:
+            if self.active_waypoint is None and self.pending_waypoints:
+                self.active_waypoint = np.array(self.pending_waypoints.popleft(), dtype=float, copy=True)
+                self.active_waypoint_batch_index = self.completed_waypoints_in_rollout + 1
+                self.command_target = np.array(self.active_waypoint, dtype=float, copy=True)
+                next_waypoint = np.array(self.active_waypoint, dtype=float, copy=True)
+                next_waypoint_idx = self.active_waypoint_batch_index
+            elif self.active_waypoint is None and self.command_target is None:
+                self.command_target = np.array(current_position_hold, dtype=float, copy=True)
+
+            active_waypoint = None if self.active_waypoint is None else np.array(
+                self.active_waypoint, dtype=float, copy=True
+            )
+            active_waypoint_idx = self.active_waypoint_batch_index
+            applied_rollout_id = self.applied_rollout_id
+
+        if rollout_loaded is not None:
+            rollout_id, rollout_len = rollout_loaded
+            self.get_logger().info(
+                f'Loaded updated rollout {rollout_id} with {rollout_len} waypoints for tracking'
+            )
+
+        if reached is not None:
+            self.get_logger().info(
+                f'Reached rollout {applied_rollout_id} waypoint {reached_idx}/{LLM_WAYPOINT_COUNT} '
+                f'({reached[0]:.2f}, {reached[1]:.2f}, {reached[2]:.2f})'
+            )
+
+        if next_waypoint is not None:
+            self._publish_debug_target_waypoint(next_waypoint)
+            self.get_logger().info(
+                f'Tracking rollout {applied_rollout_id} waypoint '
+                f'{next_waypoint_idx}/{LLM_WAYPOINT_COUNT} '
+                f'({next_waypoint[0]:.2f}, {next_waypoint[1]:.2f}, {next_waypoint[2]:.2f})'
+            )
+
+        if active_waypoint is None:
+            return
+
+        with self.state_lock:
+            current_position = np.array(self.current_position, dtype=float, copy=True)
+        target = np.asarray(active_waypoint, dtype=float)
+        xy_error = float(np.linalg.norm(target[:2] - np.asarray(current_position[:2], dtype=float)))
+        z_error = abs(float(target[2] - current_position[2]))
+        self.get_logger().info(
+            f'Waiting for drone to reach rollout {applied_rollout_id} waypoint '
+            f'{active_waypoint_idx}/{LLM_WAYPOINT_COUNT}: '
             f'target=({target[0]:.2f}, {target[1]:.2f}, {target[2]:.2f}), '
-            f'current=({self.current_position[0]:.2f}, {self.current_position[1]:.2f}, {self.current_position[2]:.2f}), '
+            f'current=({current_position[0]:.2f}, {current_position[1]:.2f}, {current_position[2]:.2f}), '
             f'xy_error={xy_error:.2f}m, z_error={z_error:.2f}m',
             throttle_duration_sec=1.0,
         )
 
-    def _execute_legacy_goto_rollout(self):
-        self._load_waypoint_rollout_if_needed()
-        if not self.pending_waypoints:
-            return
-        next_position = np.array(self.pending_waypoints.popleft(), dtype=float, copy=True)
-        self._publish_debug_target_waypoint(next_position)
-        if HAS_PX4_MSGS:
-            self.publish_trajectory_setpoint(next_position)
-        else:
-            velocity = self.compute_velocity_command(next_position)
-            self.publish_velocity(velocity)
-    
-    def plan_trajectory(self):
-        """Execute a queued LLM rollout, or query a fresh 5-waypoint rollout when empty."""
-        
-        # Check if we have all data
-        if self.depth_image is None:
-            self.get_logger().warn('Waiting for depth camera data...', throttle_duration_sec=2.0)
-            return
-        
-        # Check if goal reached
-        dist_to_goal = np.linalg.norm(self.goal - self.current_position)
-        if dist_to_goal < 0.5:
-            self.get_logger().info('Goal reached!', throttle_duration_sec=1.0)
-            self.publish_zero_velocity()
-            return
-        
-        try:
-            if bool(self.get_parameter('use_legacy_goto_execution').value):
-                self._execute_legacy_goto_rollout()
-            else:
-                self._execute_pose_tracking_rollout()
-
-            if len(self.mpc_trajectory) > 0:
-                error = self.compute_trajectory_error()
-                self.get_logger().info(
-                    f'LLM vs MPC error: {error:.3f}m',
-                    throttle_duration_sec=1.0
-                )
-                
-        except Exception as e:
-            self.get_logger().error(f'LLM query failed: {e}')
+        error = self.compute_trajectory_error()
+        if error > 0.0:
+            self.get_logger().info(
+                f'LLM vs MPC error: {error:.3f}m',
+                throttle_duration_sec=1.0
+            )
     
     def _get_openai_client(self):
         """Initialize OpenAI client on first use."""
@@ -723,7 +849,7 @@ class LLMTrajectoryPlanner(Node):
         return self.structured_client
 
     def query_llm(self):
-        """Query the configured LLM backend and return a validated waypoint rollout."""
+        """Query the configured LLM backend and return a validated PlannerOutput."""
         user_message, env_vector, env_text = self.build_live_prompt()
 
         provider = str(self.get_parameter('llm_provider').value).strip().lower()
@@ -742,6 +868,12 @@ class LLMTrajectoryPlanner(Node):
                 self.get_logger().error(f'Failed to parse LLM response: {e}')
                 return None
 
+        return output
+
+    def extract_waypoints(self, output):
+        """Extract the fixed 5-waypoint rollout from a PlannerOutput object."""
+        if output is None:
+            return None
         try:
             if len(output.waypoints) != LLM_WAYPOINT_COUNT:
                 raise ValueError(
@@ -766,7 +898,7 @@ class LLMTrajectoryPlanner(Node):
             self.get_logger().info(f"Observation: {output.plan_trace.observation}")
             self.get_logger().info(f"Reasoning: {output.plan_trace.reasoning}")
             return llm_waypoints
-        except (ValueError, TypeError) as e:
+        except (AttributeError, ValueError, TypeError) as e:
             self.get_logger().error(f'Failed to validate structured planner output: {e}')
             return None
 
@@ -892,7 +1024,9 @@ class LLMTrajectoryPlanner(Node):
 
     def compute_velocity_command(self, target_position):
         """Convert target position to velocity command"""
-        direction = target_position - self.current_position
+        with self.state_lock:
+            current_position = np.array(self.current_position, dtype=float, copy=True)
+        direction = target_position - current_position
         distance = np.linalg.norm(direction)
         
         if distance > 0:
@@ -941,13 +1075,18 @@ class LLMTrajectoryPlanner(Node):
         refreshed at a steady rate. This timer decouples control streaming from
         LLM query latency.
         """
-        if self.active_waypoint is None:
+        with self.execution_lock:
+            target_position = None if self.command_target is None else np.array(
+                self.command_target, dtype=float, copy=True
+            )
+
+        if target_position is None:
             return
 
         if HAS_PX4_MSGS:
-            self.publish_trajectory_setpoint(self.active_waypoint)
+            self.publish_trajectory_setpoint(target_position)
         else:
-            velocity = self.compute_velocity_command(self.active_waypoint)
+            velocity = self.compute_velocity_command(target_position)
             self.publish_velocity(velocity)
 
     def publish_trajectory_setpoint(self, target_position):
@@ -968,7 +1107,9 @@ class LLMTrajectoryPlanner(Node):
         """Stop the drone"""
         if HAS_PX4_MSGS:
             # Hold current position when using trajectory setpoints.
-            self.publish_trajectory_setpoint(self.current_position)
+            with self.state_lock:
+                current_position = np.array(self.current_position, dtype=float, copy=True)
+            self.publish_trajectory_setpoint(current_position)
         else:
             self.publish_velocity(np.zeros(3))
     
@@ -977,16 +1118,20 @@ class LLMTrajectoryPlanner(Node):
         Compute supremum (max) error between LLM and MPC trajectories
         Returns: max Euclidean distance between corresponding points
         """
-        if len(self.llm_trajectory) == 0 or len(self.mpc_trajectory) == 0:
+        with self.execution_lock:
+            llm_trajectory = [np.array(pt, dtype=float, copy=True) for pt in self.llm_trajectory]
+            mpc_trajectory = [np.array(pt, dtype=float, copy=True) for pt in self.mpc_trajectory]
+
+        if len(llm_trajectory) == 0 or len(mpc_trajectory) == 0:
             return 0.0
         
         # Align trajectories (use minimum length)
-        min_len = min(len(self.llm_trajectory), len(self.mpc_trajectory))
+        min_len = min(len(llm_trajectory), len(mpc_trajectory))
         
         errors = []
         for i in range(min_len):
-            llm_point = self.llm_trajectory[i]
-            mpc_point = self.mpc_trajectory[i]
+            llm_point = llm_trajectory[i]
+            mpc_point = mpc_trajectory[i]
             error = np.linalg.norm(llm_point - mpc_point)
             errors.append(error)
         
@@ -994,6 +1139,13 @@ class LLMTrajectoryPlanner(Node):
         sup_error = max(errors) if errors else 0.0
         
         return sup_error
+
+    def destroy_node(self):
+        self.stop_event.set()
+        for worker in (getattr(self, 'llm_thread', None), getattr(self, 'tracking_thread', None)):
+            if worker is not None and worker.is_alive():
+                worker.join(timeout=1.0)
+        return super().destroy_node()
 
 
 def main(args=None):
