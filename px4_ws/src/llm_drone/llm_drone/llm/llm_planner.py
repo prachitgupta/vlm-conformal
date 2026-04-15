@@ -856,7 +856,7 @@ class LLMTrajectoryPlanner(Node):
         if provider == 'openai':
             output = self.query_structured_model(user_message, provider)
         elif provider in ('vllm', 'tgis'):
-            output = self.query_structured_model(user_message, provider)
+            output = self.query_vllm_json_model(user_message)
         else:
             content = self.query_qwen_model(user_message)
             self.get_logger().info(f'Raw LLM response:\n{content}')
@@ -966,6 +966,54 @@ class LLMTrajectoryPlanner(Node):
             self.get_logger().error(
                 f'Structured request failed (provider={provider}, model={model_name}): {e}'
             )
+            raise
+
+    def query_vllm_json_model(self, user_message):
+        """Query vLLM without function-calling and parse a JSON object response."""
+        api_key = os.getenv('VLLM_API_KEY', str(self.get_parameter('vllm_api_key').value).strip())
+        if not api_key:
+            raise RuntimeError('vLLM API key is empty. Set VLLM_API_KEY or parameter vllm_api_key')
+
+        base_url = str(self.get_parameter('vllm_url').value).strip()
+        if base_url.endswith('/chat/completions'):
+            base_url = base_url[: -len('/chat/completions')]
+
+        client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+        )
+        model_name = str(self.get_parameter('vllm_model').value).strip()
+        temperature = float(self.get_parameter('vllm_temperature').value)
+        max_tokens = int(self.get_parameter('vllm_max_tokens').value)
+
+        schema_json = json.dumps(PlannerOutput.model_json_schema(), indent=2)
+        json_system_prompt = (
+            f"{self.system_prompt}\n\n"
+            "Return exactly one JSON object matching this schema.\n"
+            f"{schema_json}\n"
+            "Do not call tools. Do not add markdown fences. Do not add extra text."
+        )
+
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": json_system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                extra_body={"guided_json": PlannerOutput.model_json_schema()},
+            )
+            content = response.choices[0].message.content or ""
+            self.get_logger().info(f'Raw vLLM response:\n{content}')
+            start = content.find('{')
+            end = content.rfind('}') + 1
+            if start < 0 or end <= start:
+                raise ValueError('vLLM response did not contain a JSON object')
+            return PlannerOutput.model_validate_json(content[start:end])
+        except Exception as e:
+            self.get_logger().error(f'vLLM JSON request failed (model={model_name}): {e}')
             raise
 
     def query_qwen_model(self, user_message):
