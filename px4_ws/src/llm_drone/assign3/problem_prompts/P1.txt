@@ -1,0 +1,28 @@
+Problem ID: P1
+Difficulty: Easy
+Title: Clear Corridor Cruise
+
+Task:
+Plan a smooth five-waypoint local trajectory for a quadrotor in an almost open corridor.
+
+Current state:
+- Current position NED is (0.00, 0.00, -2.50) m.
+- Current velocity NED is (0.00, 0.00, 0.00) m/s.
+- Goal position NED is (8.00, 0.50, -2.50) m.
+
+Obstacle map:
+- north_tree: cylinder centered at NED (4.30, 2.70) m with radius 0.70 m.
+- south_crate: axis-aligned box centered at NED (5.60, -2.80) m with north/east footprint 1.20 x 1.20 m.
+
+Hard constraints:
+- Maintain at least 0.80 m clearance from every listed obstacle.
+- The first waypoint must be within 3.00 m of the current position.
+- Consecutive waypoint spacing should stay between 0.20 m and 1.40 m.
+- Use selected_waypoint_index = 0 unless there is a strong safety reason to choose otherwise.
+
+Expected qualitative behavior:
+- The correct behavior is close to a straight line toward the goal.
+- A slight east bias is acceptable, but the path should remain local and smooth.
+
+Required deliverable:
+- Return exactly five 2D NED waypoints, select the immediate next waypoint, and explain briefly why the trajectory is safe and goal-directed.

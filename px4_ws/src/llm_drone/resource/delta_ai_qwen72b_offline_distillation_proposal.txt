@@ -4,7 +4,7 @@ Project title
 Offline Teacher-Student Distillation for Vision-Language-Inspired Drone Planning with Qwen2.5-72B
 
 Project summary
-This project extends the llm_drone codebase to improve waypoint planning for autonomous drone navigation in cluttered simulated environments. The repository already supports structured world generation, PX4/Gazebo-based offline trajectory collection, prompt-variant evaluation, and teacher-data generation. The next step is to use a stronger teacher model, Qwen2.5-72B-Instruct, to generate high-quality response data over our offline navigation dataset. We will then distill those responses into smaller deployable models that can run with lower latency and lower hardware cost during inference.
+This project extends the llm based drone to improve waypoint planning for autonomous drone navigation in cluttered simulated environments. An existing codebase developed already supports structured world generation, PX4/Gazebo-based offline trajectory collection, prompt-variant evaluation, and teacher-data generation. The next step is to use a stronger teacher model, Qwen2.5-72B-Instruct, to generate high-quality response data over our offline navigation dataset. We will then distill those responses into smaller deployable models that can run with lower latency and lower hardware cost during inference.
 
 We are requesting access to DeltaAI/NCSA GPU resources to host Qwen2.5-72B with vLLM and produce teacher-labeled data at scale. This work is inference-heavy rather than training-heavy at the teacher stage, but it requires significantly more memory and throughput than our local workstation can reliably provide.
 
@@ -27,38 +27,6 @@ DeltaAI/NCSA resources would enable us to:
 - regenerate data when we refine prompt templates or world distributions
 - produce a stronger teacher dataset for downstream fine-tuning and ablation studies
 
-Technical background in this repository
-The llm_drone repository already contains the main components required for this workflow:
-- offline dataset generation from PX4/Gazebo simulation using `offline_dataset_batch_runner`
-- merged prompt datasets in `dataset/`
-- prompt variants in `config/variants/`
-- scripts for querying Qwen and ChatGPT prompt variants
-- a teacher-data generation path via `scripts/teacher_data_generator.py`
-- training scripts and model checkpoints for smaller student planners
-
-This means the requested compute would be used immediately for a concrete next-stage experiment, not for speculative infrastructure work.
-
-Proposed workflow
-1. Generate or extend the offline navigation dataset using the current world-generation and PX4/Gazebo pipeline.
-2. Select a controlled set of system prompt variants from `config/variants/`.
-3. Host Qwen2.5-72B-Instruct on DeltaAI/NCSA using vLLM.
-4. Run teacher inference over the dataset prompts and save teacher responses to new CSV outputs.
-5. Filter and validate outputs for formatting, waypoint-count consistency, and task relevance.
-6. Distill the teacher-labeled data into smaller student planners suitable for local or onboard use.
-7. Compare students trained from smaller-teacher data versus Qwen72B-teacher data.
-
-Research goals
-- Improve the quality of waypoint-generation supervision for drone planning.
-- Determine whether stronger teacher responses produce measurably better student planners.
-- Study how prompt design interacts with teacher quality in structured navigation tasks.
-- Build a repeatable offline distillation pipeline for embodied planning models.
-
-Expected outcomes
-- A large teacher-labeled dataset generated with Qwen2.5-72B-Instruct.
-- Quantitative comparison of prompt variants under a strong teacher.
-- Distilled student models with improved planning behavior over current baselines.
-- Better understanding of which world distributions and prompt formats produce the best supervision signal.
-
 Evaluation plan
 We will evaluate both teacher outputs and distilled students using existing and planned metrics:
 - waypoint format correctness and parse success rate
@@ -80,11 +48,6 @@ A practical target allocation would support:
 Broader impact and fit
 This project contributes to efficient embodied AI by using a large teacher model offline and distilling its behavior into smaller deployable models. That aligns well with practical robotics constraints, where deployment-time latency and compute budgets are limited. The proposed work uses large-scale infrastructure where it adds the most value, during teacher-data generation, while keeping the final planner lightweight and usable in realistic robotics settings.
 
-Deliverables
-- teacher-labeled dataset generated with Qwen2.5-72B-Instruct
-- prompt-variant comparison results
-- distilled student checkpoints
-- experimental report summarizing gains from stronger-teacher offline distillation
 
 One-paragraph version for a compute request form
 I am requesting DeltaAI/NCSA GPU access to host Qwen2.5-72B-Instruct with vLLM and generate teacher-labeled waypoint-planning data for the `llm_drone` project. This repository already supports PX4/Gazebo-based offline dataset generation, prompt-variant testing, and teacher-data export, but our local hardware is only practical for much smaller Qwen models. Access to DeltaAI resources would let us run large-scale offline teacher inference over our navigation dataset, evaluate prompt variants under a stronger model, and distill the resulting responses into smaller student planners that are fast enough for deployment. The main need is reliable high-memory GPU inference for offline data generation rather than full large-model training.

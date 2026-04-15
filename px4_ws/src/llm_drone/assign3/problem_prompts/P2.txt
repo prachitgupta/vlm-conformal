@@ -1,0 +1,29 @@
+Problem ID: P2
+Difficulty: Easy
+Title: Single-Obstacle Go-Around
+
+Task:
+Plan a five-waypoint local trajectory from the start state to the goal while avoiding one central blocker and two side guards.
+
+Current state:
+- Current position NED is (0.00, 0.00, -2.50) m.
+- Current velocity NED is (0.00, 0.00, 0.00) m/s.
+- Goal position NED is (10.00, 0.00, -2.50) m.
+
+Obstacle map:
+- center_pole: cylinder centered at NED (3.60, 0.00) m with radius 1.00 m.
+- north_guard: cylinder centered at NED (6.00, 2.40) m with radius 0.70 m.
+- south_guard: cylinder centered at NED (6.10, -2.50) m with radius 0.70 m.
+
+Hard constraints:
+- Maintain at least 0.80 m clearance from every listed obstacle.
+- The first waypoint must be within 3.00 m of the current position.
+- Consecutive waypoint spacing should stay between 0.20 m and 1.40 m.
+- Use selected_waypoint_index = 0 unless there is a strong safety reason to choose otherwise.
+
+Expected qualitative behavior:
+- A straight line is unsafe because the center blocker sits on the goal line.
+- Make one deliberate lateral move around the blocker and then start bending back toward the goal.
+
+Required deliverable:
+- Return a collision-free five-waypoint local plan that goes around the center obstacle while still making useful progress.

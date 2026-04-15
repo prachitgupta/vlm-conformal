@@ -18,8 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_CSV = REPO_ROOT / "dataset" / "dataset_merged_without_reasoning.csv"
 DEFAULT_PROMPT_FILE = REPO_ROOT / "config" / "variant_X.txt"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "dataset"
-DEFAULT_OUTPUT_NAME = "teacher_dataset.csv"
-DEFAULT_QWEN_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+DEFAULT_OUTPUT_NAME = "teacher_dataset_qwen.csv"
+DEFAULT_QWEN_BASE_URL = os.environ.get("QWEN_BASE_URL", "http://127.0.0.1:8000/v1")
+DEFAULT_QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "token-abc123")
+DEFAULT_QWEN_MODEL = os.environ.get("QWEN_MODEL", "Qwen/Qwen2.5-72B-Instruct")
 DEFAULT_OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 
@@ -56,9 +58,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-name", default=DEFAULT_OUTPUT_NAME, help="Output CSV filename to create inside dataset/")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--teacher", choices=("qwen", "chatgpt"), default="qwen")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
-    parser.add_argument("--api-key", default="token-abc123")
-    parser.add_argument("--model", default="")
+    parser.add_argument("--base-url", default=DEFAULT_QWEN_BASE_URL, help="OpenAI-compatible endpoint for the Qwen server")
+    parser.add_argument("--api-key", default=DEFAULT_QWEN_API_KEY, help="API key for the Qwen server")
+    parser.add_argument("--model", default="", help="Override model name. Defaults to QWEN_MODEL or OPENAI_MODEL.")
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--max-tokens", type=int, default=400)
     parser.add_argument("--start-row", type=int, default=0)

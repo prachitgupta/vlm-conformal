@@ -1,0 +1,30 @@
+Problem ID: P4
+Difficulty: Hard
+Title: Trap Exit Around a U-Shaped Blocker
+
+Task:
+Plan a five-waypoint local horizon that begins escaping a U-shaped trap while still making net progress toward the goal.
+
+Current state:
+- Current position NED is (0.00, 0.00, -2.50) m.
+- Current velocity NED is (0.00, 0.00, 0.00) m/s.
+- Goal position NED is (13.00, 0.00, -2.50) m.
+
+Obstacle map:
+- center_wall: axis-aligned box centered at NED (4.80, 0.00) m with north/east footprint 1.40 x 4.40 m.
+- upper_arm: axis-aligned box centered at NED (7.00, 1.80) m with north/east footprint 2.80 x 0.90 m.
+- lower_arm: axis-aligned box centered at NED (7.00, -1.80) m with north/east footprint 2.80 x 0.90 m.
+- lower_decoy: cylinder centered at NED (8.80, -3.00) m with radius 0.80 m.
+
+Hard constraints:
+- Maintain at least 0.90 m clearance from every listed obstacle.
+- The first waypoint must be within 3.00 m of the current position.
+- Consecutive waypoint spacing should stay between 0.20 m and 1.40 m.
+- Use selected_waypoint_index = 0 unless there is a strong safety reason to choose otherwise.
+
+Expected qualitative behavior:
+- The greedy direct route is blocked.
+- Bias upward first, leave the trap through the upper opening, and do not get lured into the lower pocket.
+
+Required deliverable:
+- Return five feasible local waypoints that begin the trap-exit maneuver while staying smooth and collision-safe.

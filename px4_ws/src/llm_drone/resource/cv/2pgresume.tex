@@ -1,0 +1,331 @@
+%-------------------------
+% Resume in Latex
+% Author : Prachit Gupta
+% Based on template by Aras Gungore
+% License : MIT
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{amsmath}
+\usepackage{fontawesome} % For GitHub icon
+\usepackage[hidelinks]{hyperref} % For clickable link
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{hyphenat}
+\usepackage{fontawesome}
+\input{glyphtounicode}
+
+%---------- FONT OPTIONS ----------
+% sans-serif
+% \usepackage[sfdefault]{FiraSans}
+% \usepackage[sfdefault]{roboto}
+% \usepackage[sfdefault]{noto-sans}
+% \usepackage[default]{sourcesanspro}
+
+% serif
+% \usepackage{CormorantGaramond}
+% \usepackage{charter}
+
+\pagestyle{fancy}
+\fancyhf{} % clear all header and footer fields
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+% Ensure that generate pdf is machine readable/ATS parsable
+\pdfgentounicode=1
+
+%-------------------------
+% Custom commands
+
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubSubheading}[2]{
+    \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \textit{\small#1} & \textit{\small #2} \\
+    \end{tabular*}\vspace{-15pt}
+}
+
+\newcommand{\resumeEducationHeading}[8]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+      \textit{\small#5} & \textit{\small #6} \\
+      \textit{\small#7} & \textit{\small #8} \\
+    \end{tabular*}\vspace{-15pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeOrganizationHeading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & \textit{\small #2} \\
+      \textit{\small#3}
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+%-------------------------------------------
+%%%%%%  RESUME STARTS HERE  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+%---------- HEADING ----------
+
+\begin{center}
+    \textbf{\Huge \scshape Prachit Gupta} \\ \vspace{3pt}
+    % \small
+    % 217-555-7488 $|$
+    \textcolor{blue}\faEnvelope \hspace{.5pt} \href{mailto:prachitg@iitb.ac.in}{prachitg@iitb.ac.in}
+    $|$
+    \textcolor{blue}\faLinkedinSquare \hspace{.5pt} \href{https://www.linkedin.com/in/prachit-gupta-60a210240/}{LinkedIn}
+    $|$
+    \textcolor{blue}\faGithub \hspace{.5pt} \href{https://github.com/prachitgupta}{github}
+\end{center}
+
+%----------- EDUCATION -----------
+
+\section{Education}
+  \vspace{3pt}
+  \resumeSubHeadingListStart
+    
+    \resumeSubheading
+      {University of Illinois Urbana Champaign}{Urbana, IL}
+      {Master of Science in Mechanical Engineering}{Aug 2025 \textbf{--} May 2027 (Expected)}
+    
+    \resumeEducationHeading
+      {Indian Institute of Technology Bombay}{Mumbai, India}
+      {B.Tech. in Mechanical Engineering;   \textbf{GPA: 3.67/4.0}}{Nov 2021 \textbf{--} May 2025 }
+      {Minor Degree in Systems and Controls  }{July 2022 \textbf{--} May 2025 }
+      {}{}
+      {}{}
+    
+  \resumeSubHeadingListEnd
+
+%----------- TECHNICAL SKILLS -----------
+
+\section{Technical Skills}
+  \vspace{2pt}
+  \resumeSubHeadingListStart
+    \small{\item{
+        \textbf{Programming:}{ C/C++, Python, Arduino, Matlab, Lua, URDF, Xacro} \\ \vspace{3pt}
+        
+        \textbf{Software Tools: }{ROS, ROS2, Git, MATLAB, Simulink, Solidworks, Eagle, Gazebo, Arduino, QGC, Mission Planner, CoppeliaSim, X-Plane, Rviz, Mavros, Ardupilot, PX4  \LaTeX} \\ \vspace{3pt}
+        
+        \textbf{Frameworks:}{ Gymnasium, TIVA, Mavros, OpenCv, Scikit-learn,  Numpy, Matplotlib, helperOc, CVXPY, CasADI}
+    }}
+  \resumeSubHeadingListEnd
+
+\section{Relevant Coursework}
+  \vspace{2pt}
+  \resumeSubHeadingListStart
+    \small{\item{
+         \textbf{Math and Computing: }{Microprocessors and Automation, Linear and Nonlinear Systems, Random Processes, Games and Information, Numerical Analysis, Linear Algebra, Machine Learning, Operations Modeling} \\ \vspace{3pt}
+        
+        
+        \textbf{Hands-on Courses: } { Microprocessors and Automatic Control Lab, Mechanical Measurements, Design of Mechatronic Systems} \\ \vspace{3pt}
+
+        \textbf{Online Certifications:}{{\href{https://drive.google.com/file/d/1FENstYRNOMlgUgQfVGvkOdTWO1FXMmVz/view?usp=sharing}{\color{blue}{ Aerial Robotics (UPenn)}}, \href{https://drive.google.com/file/d/1O5NYMaMf6Hp1x4nJZXOvCUKCOPwP3gpn/view?usp=sharing}{\color{blue}{ Introduction to Internet of Things (UCI)}}}}
+    }}
+  \resumeSubHeadingListEnd
+
+%----------- RESEARCH EXPERIENCE -----------
+
+\section{Work Experience}
+  \vspace{3pt}
+  \resumeSubHeadingListStart
+  
+    \resumeSubheading
+      {Multi-Agent Control with Safety Guarantees \href{https://github.com/prachitgupta/multi-agent-control/}{\textcolor{blue}\faGithub}}{IIT Bombay, India}
+      {  Dept. of Systems and Control Engineering \textbar \hspace{0.4mm}Advisor: Prof. Mayank Barnwal}{Nov 24 - May 25}
+        \resumeItemListStart
+            \resumeItem{Developed decentralized neural networks in \textbf{PyTorch} to ensure \textbf{safe multi-agent} control across varying scales.}
+            \resumeItem{Jointly trained control policies and \textbf{barrier functions}, enhancing safety and scalability in complex environments.}
+            \resumeItem{Leveraged \textbf{Large Language Models} (LLMs) to intuitively and effectively optimize \textbf{Reinforcement Learning}
+            (RL) reward functions for \textbf{Deep -Q-Network} agents in an Intelligent driving scenario in a \textbf{human-centric} way. }
+        \resumeItemListEnd
+
+    \resumeSubheading
+      {Safewalk Robotics \href{https://github.com/prachitgupta/Person-follower/}{\textcolor{blue}\faGithub}}{Queen's University, Canada}
+      {Dept. of Electrical and Computer Engineering \textbar \hspace{0.4mm}Advisor: Prof. Matthew Pan}{May 24- July 24}
+        \resumeItemListStart
+            \resumeItem{Developed \textbf{ROS }controllers for detection based dynamic object following on \textbf{Quadruped Unitree GO1}.}
+            \resumeItem{Crafted \textbf{human-following} algorithms in \textbf{ROS2} for\textbf{ Turtlebot4} using \textbf{depthai-blazepose} for skeletal detection}
+            \resumeItem{Implemented \textbf{SLAM} and \textbf{Follow the Gap} based object avoidance using ROS2 and \textbf{NAV2} for indoor navigation.}
+            \resumeItem{Designed a hybrid \textbf{SL-based RL policy} framework for person-following robots in outdoor environments, robust to occlusions, and detection inaccuracies by training \textbf{deep neural networks} on a custom expanded dataset.}
+        \resumeItemListEnd
+    
+    \resumeSubheading
+      {Advanced Safety and Control Systems for Autonomous Vehicles \href{https://github.com/prachitgupta/Safe-control-Systems-for-AVs}{\textcolor{blue}\faGithub}}{IIT Bombay, India}
+      {  Dept. of Systems and Control Engineering \textbar \hspace{0.4mm} Advisor: Prof. Arpita Sinha}{July 2023 \textbf{--} March 2023}
+        \resumeItemListStart
+            \resumeItem{Developed a\textbf{ safety verification system} for autonomous cars using \textbf{forward reachability}, ensuring collision-free navigation and generating optimized emergency trajectories using \textbf{convex optimization }in \textbf{CVXPY}}
+            \resumeItem{Computed\textbf{ avoid sets} for AVs, realized as the viscosity solution of the\textbf{ Hamilton-Jacobi PDE} for safe
+            \textbf{robot-human interactions}, using the \textbf{helperOc} package for \textbf{dynamic programming} and optimization.}
+            \resumeItem{Integrated reachability-based safety guarantees into a \textbf{Model Predictive Controller} for overtaking maneuvers of autonomous vehicles, modeled as a \textbf{zero-sum differential game} between the robot and a human lead vehicle. }
+        \resumeItemListEnd
+
+    \resumeSubheading
+      {Communication and Control of Autonomous Drones}{IIT Bombay, India}
+      {  Dept. of Aerospace Engineering \textbar \hspace{0.4mm}Advisor: Prof. Dhwanil shukla}{Feb '22 - Dec' 22}
+        \resumeItemListStart
+            \resumeItem{\textbf{Senior Avionics Engineer} responsible for conducting state-of-the-art research to achieve full aerial autonomy. }
+            \resumeItem{Employed wind data for \textbf{barometric compensation}, ensuring stable altitude and preventing sudden drops.}
+            \resumeItem{Customized the \textbf{Ardupilot's }autopilot codebase to develop a custom mode enabling immediate motor shutdown. }
+            \resumeItem{Developed\textbf{ Minimum Snap} trajectories with optimized time segments using \textbf{constrained quadratic programming}}
+        \resumeItemListEnd
+    
+  \resumeSubHeadingListEnd
+
+%----------- PROJECTS -----------
+
+\section{Projects}
+    \vspace{3pt}
+    \resumeSubHeadingListStart
+      
+      \resumeProjectHeading
+        {\textbf{Unmanned Aerial System Competition (UAS) 2023, UK \href{https://drive.google.com/file/d/1WV4QErn8yY4VFt1VPSXM47nrlTsFxXM8/view?usp=sharing}{\textcolor{blue}\faFileText}}}{Feb '23 - Jun '22}
+          \resumeItemListStart
+            \resumeItem{Achieved outstanding results, winning 3 awards: \textbf{Best Design}; \textbf{Scrutineering Award} for meeting supportability goals; \textbf{Advancement Award} for highest score among newcomers at Buckminster, UK}
+            \resumeItem{Designed a \textbf{7 kg drone} for relief operations, capable of lifting 150,000 of payload \& a flight of \textbf{20+ min}.}
+            \resumeItem{Leveraged \textbf{Lua Scripting}, \textbf{Pymavlink}, and \textbf{RPI GPIO} interfaces for safe and reliable payload drop actuation}  
+            \resumeItem{Simulated the complete mission in \textbf{Gazebo} environment using \textbf{ROS} with \textbf{ArduPilot} as the flight control stack.}
+          \resumeItemListEnd      
+
+      \resumeProjectHeading
+        {\textbf{International Aerial Robotics Competition (IARC), Norway \href{https://www.youtube.com/watch?v=VfRIcAEMAtk}{\textcolor{blue}\faYoutubePlay}}}{Aug '22 - Oct '22}
+          \resumeItemListStart
+            \resumeItem{Recognized by the organizers with \textbf{Special Mention} for the concept of a system of mother and daughter drone. }
+            \resumeItem{Manufactured and assembled a \textbf{15kg} payload drone, Audrey, sized 2m x 2m with\textbf{ Xavier NX} onboard computer}
+            \resumeItem{Engineered the entire circuitry and developed C code for an autonomous replacement and gripper assembly}
+            \resumeItem{ Designed and successfully fabricated a \textbf{custom PCB} board using \textbf{EAGLE} software to ensure compact circuitry}
+          \resumeItemListEnd
+      
+      \resumeProjectHeading
+        {\textbf{Estimation on Lie Groups \href{https://github.com/prachitgupta/estimation-of-lie-groups.git}{\textcolor{blue}\faGithub}}}{Jan '24 - Apr '24}
+          \resumeItemListStart
+            \resumeItem{Derived spacecraft attitude estimators and observers using \textbf{Wahba}, \textbf{Quest}, \textbf{Triad} and \textbf{Kalman filter} algorithm.}         
+            \resumeItem{Authored a review paper on a Model Predictive Tracking Control for Invariant Systems on Matrix \textbf{Lie Groups}, utilizing \textbf{stable embedding} into Euclidean spaces combining manifold-based motion description with \textbf{MPC constraint handling}.}
+          \resumeItemListEnd
+      
+     \resumeProjectHeading
+        {\textbf{UAV Control \href{https://drive.google.com/file/d/1YJMkE_d_qF7e8o8JVXV1JxMFuqVRfb9Q/view?usp=sharing}{\textcolor{blue}\faFileText}}}
+        {Apr '23 - May '23}
+          \resumeItemListStart
+            \resumeItem{Implemented and tuned \textbf{Control-Lyapunov} function-based Non-linear \textbf{Backstepping coupled Sliding Mode Controller} for better tracking and robust performance against disturbances and changing parameters}
+            \resumeItem{Achieved stable tracking even with an additional\textbf{ 45\%} uncertainty in rotary inertia and disturbances.}
+            \resumeItem{Modelled lateral and longitudinal autopilots for a model of\textbf{ Fixed-wing} aircraft in \textbf{Matlab} using \textbf{Simulink}.}
+          \resumeItemListEnd
+
+      \resumeProjectHeading
+        {\textbf{Inverted Pendulum}}{Sep '24 - Nov '24}
+          \resumeItemListStart
+            \resumeItem{Developed a framework to swing up and balance an inverted pendulum using \textbf{energy-based nonlinear} control.}
+            \resumeItem{Designed a \textbf{state-feedback} control system to balance the pendulum at its vertical upward position using \textbf{LQR}.}
+            \resumeItem{Implemented \textbf{LQR-based} swing-up strategy for \textbf{cart-pole} system, achieving stabilization from downward to upward position in\textbf{ 4 seconds}.}
+          \resumeItemListEnd
+
+      \resumeProjectHeading
+        {\textbf{Taxi Route Optimization}}{Jan '24 - Apr '24}
+          \resumeItemListStart
+            \resumeItem{ Achieved\textbf{ 90\%} cab-to-customer allocation of multi-depot problem by optimizing dispatch strategies. }
+            \resumeItem{Enhanced the dispatch algorithm using a profit function that balanced number of cabs and customer waiting times}
+            \resumeItem{Modelled the capacitated open \textbf{vehicle routing} with Pulp, using \textbf{MTZ constraints}, and \textbf{OpenStreetMap} for visualisation.}
+          \resumeItemListEnd
+
+    \resumeSubHeadingListEnd
+
+%----------- MENTORSHIP AND TEACHING EXPERIENCE -----------
+
+\section{Leadership and ExtraCurricular}
+  \vspace{3pt}
+  \resumeSubHeadingListStart
+    
+    \resumeSubheading
+      {Technical Advisor Team Aerove \href{https://umiciitb.github.io/}{\textcolor{blue}\faGlobe }}{IIT Bombay}
+      {UMIC - Facilitating technical start-ups and fostering innovation}{April 2023 \textbf{--} Present}
+        \resumeItemListStart
+            \resumeItem{Recruited and mentored new members in foundational robotics tools and algorithms}
+            \resumeItem{Led training sessions for 15 new recruits in ROS, OpenCV, and drone building.}
+        \resumeItemListEnd
+    
+    \resumeSubheading
+      {Solve for Society}{Amazon's Innovation Story Foundation}
+      {Led projects for underprivileged schools}{Dec 2023 \textbf{--} Jan 2023}
+        \resumeItemListStart
+            \resumeItem{Guided teams from underprivileged schools to create technical solutions for people with disabilities}
+        \resumeItemListEnd      
+      
+  \resumeSubHeadingListEnd
+
+%----------- AWARDS & ACHIEVEMENTS -----------
+
+\section{Awards \& Achievements}
+  \vspace{2pt}
+  \resumeItemListStart
+            \resumeItem{Awarded \textbf{fellowship} by \textbf{Canadian} Government to pursue research at Queens University, Kingston\hfill{\sl\small('21)}}
+            \resumeItem{Qualified as a \textbf{KVPY} Fellow and finished among \textbf{top 3 \%} of applicants from a pool of \textbf{97000+} candidates \hfill{\sl\small('21)}}
+            \resumeItem{Secured All India Rank \textbf{917} out of \textbf{150,000+} candidates in the \textbf{JEE Advanced} Exam\hfill{\sl\small('21)}}
+            \resumeItem{Secured All India Rank \textbf{388} in \textbf{Joint Entrance Exam Mains} among over \textbf{1.4 million} applicants \hfill{\sl\small('21)}}
+        \resumeItemListEnd
+
+%-------------------------------------------
+\end{document}

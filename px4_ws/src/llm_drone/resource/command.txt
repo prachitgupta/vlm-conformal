@@ -132,6 +132,14 @@ This gives you GPU 1 specifically (your target) in MB:
 ```
 1, NVIDIA L40S, 46068, 3386, 42682
 
+GPU=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits | awk -F', ' '$2<500 {print $1; exit}')
+if [ -z "$GPU" ]; then
+  echo "No sufficiently free GPU found"
+else
+  echo "Using GPU $GPU"
+  CUDA_VISIBLE_DEVICES=$GPU python train.py
+fi
+
 
 # One command that does both — shows user, PID, memory usage, and process name
 nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader -i 1 | while read pid mem; do
@@ -142,6 +150,8 @@ nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader -i 1 | whi
     echo "$user | PID: $pid | Memory: $mem MiB | Process: $cmd"
 done
 ```
+check your process
+
 
 ps aux | grep -E "gazebo|px4|mavros|ros" | grep -v grep
 
@@ -213,6 +223,9 @@ python3 px4_ws/src/llm_drone/scripts/query_qwen_prompt_variants.py \
   --model Qwen/Qwen2.5-32B-Instruct
 
 
+##qwen custom model
+vllm serve ~/vlm-conformal/px4_ws/src/llm_drone/models/qwen25_7b_drone_planner  --served-model-name qwen25_7b_drone_plannersp  --host 0.0.0.0   --port 8000   --dtype bfloat16   --api-key token-abc123   --gpu-memory-utilization 0.75   --max-model-len 4096
+
 python3 px4_ws/src/llm_drone/scripts/query_qwen_prompt_variants.py \
   --url http://localhost:8000/v1/chat/completions \
   --api-key token-abc123 \
@@ -253,3 +266,5 @@ python3 px4_ws/src/llm_drone/scripts/start_llm_planner_stack.py --model ~/vlm-co
 
 
 scp -r prachit2@172.22.224.93:/home/prachit2/vlm-conformal/px4_ws/src/llm_drone/config/variants/ ~/Desktop/variants/
+
+

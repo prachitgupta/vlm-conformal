@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-
 import instructor
 from openai import OpenAI
 from pydantic import BaseModel, Field, field_validator

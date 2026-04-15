@@ -1,0 +1,32 @@
+Problem ID: P3
+Difficulty: Hard
+Title: Alternating Slalom Corridor
+
+Task:
+Plan a five-waypoint horizon through a staggered slalom of alternating obstacles inside a narrow lane.
+
+Current state:
+- Current position NED is (0.00, 0.00, -2.50) m.
+- Current velocity NED is (0.20, 0.00, 0.00) m/s.
+- Goal position NED is (14.00, 0.20, -2.50) m.
+
+Obstacle map:
+- left_wall: axis-aligned box centered at NED (7.00, 4.30) m with north/east footprint 18.00 x 0.50 m.
+- right_wall: axis-aligned box centered at NED (7.00, -4.30) m with north/east footprint 18.00 x 0.50 m.
+- slalom_1: cylinder centered at NED (3.00, -1.10) m with radius 0.80 m.
+- slalom_2: cylinder centered at NED (5.40, 1.00) m with radius 0.80 m.
+- slalom_3: cylinder centered at NED (7.90, -0.90) m with radius 0.85 m.
+- slalom_4: cylinder centered at NED (10.40, 1.10) m with radius 0.80 m.
+
+Hard constraints:
+- Maintain at least 0.85 m clearance from every listed obstacle.
+- The first waypoint must be within 3.00 m of the current position.
+- Consecutive waypoint spacing should stay between 0.20 m and 1.40 m.
+- Use selected_waypoint_index = 0 unless there is a strong safety reason to choose otherwise.
+
+Expected qualitative behavior:
+- The path must start committing to a slalom line now, not just react to the nearest obstacle.
+- Avoid late zig-zagging and avoid scraping the lane walls.
+
+Required deliverable:
+- Return a smooth five-waypoint sequence that threads the alternating obstacles while preserving dynamic feasibility and safety margin.

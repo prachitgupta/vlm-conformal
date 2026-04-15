@@ -1,0 +1,37 @@
+Problem ID: P5
+Difficulty: Hard
+Title: Assignment 2 Long-Horizon Cluttered Corridor
+
+Task:
+Solve the Assignment 2 style local waypoint planning problem on a longer and denser corridor.
+
+Current state:
+- Current position NED is (-0.14, 0.31, -2.50) m.
+- Current velocity NED is (0.00, 0.00, 0.00) m/s.
+- Goal position NED is (35.00, 3.00, -2.50) m.
+
+Obstacle map:
+- north_lane_wall: axis-aligned box centered at NED (17.00, 6.00) m with north/east footprint 38.00 x 0.60 m.
+- south_lane_wall: axis-aligned box centered at NED (17.00, -6.00) m with north/east footprint 38.00 x 0.60 m.
+- cluster_1: cylinder centered at NED (4.20, 0.60) m with radius 0.80 m.
+- cluster_2: cylinder centered at NED (8.80, -1.20) m with radius 0.90 m.
+- cluster_3: cylinder centered at NED (12.20, 1.50) m with radius 0.80 m.
+- cluster_4: axis-aligned box centered at NED (16.20, 0.00) m with north/east footprint 2.00 x 2.80 m.
+- cluster_5: cylinder centered at NED (20.40, -1.60) m with radius 0.90 m.
+- cluster_6: axis-aligned box centered at NED (24.20, 1.80) m with north/east footprint 2.40 x 1.20 m.
+- cluster_7: cylinder centered at NED (28.10, 0.50) m with radius 0.85 m.
+- cluster_8: axis-aligned box centered at NED (31.20, 2.50) m with north/east footprint 1.80 x 1.00 m.
+
+Hard constraints:
+- Maintain at least 0.90 m clearance from every listed obstacle.
+- The first waypoint must be within 3.00 m of the current position.
+- Consecutive waypoint spacing should stay between 0.20 m and 1.40 m.
+- Use selected_waypoint_index = 0 unless there is a strong safety reason to choose otherwise.
+
+Expected qualitative behavior:
+- The local horizon should already commit to a globally sensible corridor line.
+- Avoid simply heading toward the nearest visible gap if that line will cause later collisions.
+- Keep the waypoint sequence smooth and locally executable.
+
+Required deliverable:
+- Return exactly five local NED waypoint pairs, one selected waypoint index, and a short reasoning string describing the chosen local route.
