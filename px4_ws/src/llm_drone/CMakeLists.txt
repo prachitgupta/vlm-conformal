@@ -29,7 +29,10 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(CURL REQUIRED)
 find_package(px4_msgs REQUIRED)
+find_package(px4_ros2_cpp REQUIRED)
 
 ament_python_install_package(${PROJECT_NAME})
 ament_get_python_install_dir(PYTHON_INSTALL_DIR)
@@ -55,9 +58,30 @@ ament_target_dependencies(
   cv_bridge
   px4_msgs
 )
+target_link_libraries(mpc_optimal_planner_cpp ${OpenCV_LIBRARIES})
+
+add_executable(llm_planner_goto_cpp src/llm_planner_goto_cpp.cpp)
+target_compile_features(llm_planner_goto_cpp PUBLIC cxx_std_17)
+ament_target_dependencies(
+  llm_planner_goto_cpp
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  nav_msgs
+  tf2_ros
+  cv_bridge
+  px4_msgs
+)
+target_link_libraries(
+  llm_planner_goto_cpp
+  ${OpenCV_LIBRARIES}
+  CURL::libcurl
+  px4_ros2_cpp::px4_ros2_cpp
+)
 
 install(TARGETS
   mpc_optimal_planner_cpp
+  llm_planner_goto_cpp
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -81,6 +105,7 @@ set(PYTHON_SCRIPT_WRAPPERS
   scripts/generate_synthetic_prompts
   scripts/ground_truth_generator
   scripts/offline_dataset_batch_runner
+  scripts/start_llm_planner_goto_cpp_stack.py
 )
 
 # Remove stale wrappers from older typo'd names so a rebuild doesn't leave both
