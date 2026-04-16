@@ -17,8 +17,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MODEL_SPEC = str(REPO_ROOT / "models" / "qwen25_7b_drone_planner")
-DEFAULT_SERVED_MODEL_NAME = "qwen25_7b_drone_plannersp"
+DEFAULT_MODEL_SPEC = str(REPO_ROOT / "models" / "drone_planner_chat")
+DEFAULT_SERVED_MODEL_NAME = "drone_planner_chat"
 DEFAULT_VLLM_HOST = "127.0.0.1"
 DEFAULT_VLLM_PORT = 8000
 DEFAULT_API_KEY = "token-abc123"

@@ -162,7 +162,7 @@ public:
     vllm_url_ = node_.declare_parameter<std::string>(
       "vllm_url", "http://127.0.0.1:8000/v1/chat/completions");
     vllm_model_ = node_.declare_parameter<std::string>(
-      "vllm_model", "qwen25_7b_drone_plannersp");
+      "vllm_model", "drone_planner_chat");
     vllm_api_key_ = node_.declare_parameter<std::string>("vllm_api_key", "token-abc123");
     vllm_temperature_ = node_.declare_parameter<double>("vllm_temperature", 0.3);
     vllm_max_tokens_ = node_.declare_parameter<int>("vllm_max_tokens", 256);
