@@ -744,8 +744,13 @@ public:
 
   void onActivate() override
   {
-    RCLCPP_INFO(node_.get_logger(), "Executor activated, preparing autonomous takeoff");
-    waitReadyToArm([this](px4_ros2::Result result) { onReadyToArm(result); });
+    RCLCPP_INFO(
+      node_.get_logger(),
+      "Executor activated, switching to HOLD/LOITER before arm and takeoff");
+    scheduleMode(
+      px4_ros2::ModeBase::kModeIDLoiter,
+      [this](px4_ros2::Result result) { onHoldModeReady(result); },
+      true);
   }
 
   void onDeactivate(DeactivateReason reason) override
@@ -754,12 +759,23 @@ public:
   }
 
 private:
+  void onHoldModeReady(px4_ros2::Result result)
+  {
+    if (result != px4_ros2::Result::Success) {
+      RCLCPP_ERROR(node_.get_logger(), "Failed to switch to HOLD/LOITER: %s", resultToString(result));
+      return;
+    }
+    RCLCPP_INFO(node_.get_logger(), "Vehicle is in HOLD/LOITER. Waiting for arming checks.");
+    waitReadyToArm([this](px4_ros2::Result ready_result) { onReadyToArm(ready_result); });
+  }
+
   void onReadyToArm(px4_ros2::Result result)
   {
     if (result != px4_ros2::Result::Success) {
       RCLCPP_ERROR(node_.get_logger(), "Vehicle not ready to arm: %s", resultToString(result));
       return;
     }
+    RCLCPP_INFO(node_.get_logger(), "Arming checks passed. Arming vehicle.");
     arm([this](px4_ros2::Result arm_result) { onArmed(arm_result); });
   }
 
