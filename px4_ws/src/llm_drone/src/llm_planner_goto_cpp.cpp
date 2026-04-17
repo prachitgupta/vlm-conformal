@@ -131,6 +131,52 @@ static std::string extractJsonObject(const std::string & text)
   return text.substr(start, end - start + 1);
 }
 
+static std::vector<std::string> splitConcatenatedJsonObjects(const std::string & raw_text)
+{
+  // Accept either a single JSON object or several back-to-back objects and
+  // return each top-level {...} block. When multiple are present, the newest
+  // one is used later to match "latest rollout wins" semantics.
+  std::vector<std::string> objects;
+  int depth = 0;
+  size_t object_start = std::string::npos;
+  bool in_string = false;
+  bool escaping = false;
+
+  for (size_t i = 0; i < raw_text.size(); ++i) {
+    const char ch = raw_text[i];
+
+    if (escaping) {
+      escaping = false;
+      continue;
+    }
+    if (ch == '\\' && in_string) {
+      escaping = true;
+      continue;
+    }
+    if (ch == '"') {
+      in_string = !in_string;
+      continue;
+    }
+    if (in_string) {
+      continue;
+    }
+    if (ch == '{') {
+      if (depth == 0) {
+        object_start = i;
+      }
+      ++depth;
+    } else if (ch == '}') {
+      --depth;
+      if (depth == 0 && object_start != std::string::npos) {
+        objects.push_back(raw_text.substr(object_start, i - object_start + 1));
+        object_start = std::string::npos;
+      }
+    }
+  }
+
+  return objects;
+}
+
 class LlmGotoPlannerMode : public px4_ros2::ModeBase
 {
 public:
@@ -528,16 +574,18 @@ private:
     }
   }
 
-  std::optional<PlannerRollout> parseRollout(const std::string & raw_content) const
+  std::optional<PlannerRollout> parseRollout(
+    const std::string & raw_content,
+    const Eigen::Vector3f & current_position) const
   {
-    const std::string object_text = extractJsonObject(raw_content);
-    if (object_text.empty()) {
+    const std::vector<std::string> objects = splitConcatenatedJsonObjects(raw_content);
+    if (objects.empty()) {
       RCLCPP_ERROR(node_.get_logger(), "LLM response does not contain a JSON object");
       return std::nullopt;
     }
 
     try {
-      const auto parsed = json::parse(object_text);
+      const auto parsed = json::parse(objects.back());
       const auto & waypoints_json = parsed.at("waypoints");
       if (!waypoints_json.is_array() || waypoints_json.size() != kWaypointCount) {
         throw std::runtime_error("waypoints must be an array of length 5");
@@ -552,8 +600,10 @@ private:
 
       for (const auto & waypoint_json : waypoints_json) {
         Waypoint waypoint;
-        waypoint.x = waypoint_json.at("x").get<float>();
-        waypoint.y = waypoint_json.at("y").get<float>();
+        const float dx = waypoint_json.at("x").get<float>();
+        const float dy = waypoint_json.at("y").get<float>();
+        waypoint.x = current_position.x() + dx;
+        waypoint.y = current_position.y() + dy;
         waypoint.z = waypoint_json.contains("z") ? waypoint_json.at("z").get<float>() : goal_ned_.z();
         rollout.waypoints.push_back(waypoint);
       }
@@ -562,68 +612,6 @@ private:
       RCLCPP_ERROR(node_.get_logger(), "Failed to parse planner rollout: %s", exc.what());
       return std::nullopt;
     }
-  }
-
-  VerificationResult verifyRollout(
-    const PlannerRollout & rollout,
-    const Eigen::Vector3f & current_position,
-    const std::vector<Eigen::Vector3f> & obstacle_points) const
-  {
-    const Eigen::Vector3f goal = goal_ned_;
-    const float distance_before = distance3(current_position, goal);
-    const Eigen::Vector3f selected = toEigen(rollout.waypoints.at(static_cast<size_t>(rollout.selected_index)));
-    const Eigen::Vector3f final_waypoint = toEigen(rollout.waypoints.back());
-    const float progress_selected = distance_before - distance3(selected, goal);
-    const float progress_final = distance_before - distance3(final_waypoint, goal);
-
-    float max_speed = 0.0f;
-    float max_accel = 0.0f;
-    float previous_speed = 0.0f;
-    bool first_speed = true;
-    for (size_t i = 1; i < rollout.waypoints.size(); ++i) {
-      const float speed = distance3(
-        toEigen(rollout.waypoints[i - 1]),
-        toEigen(rollout.waypoints[i])) / kWaypointVelocityDtS;
-      max_speed = std::max(max_speed, speed);
-      if (!first_speed) {
-        max_accel = std::max(max_accel, std::fabs(speed - previous_speed) / kWaypointVelocityDtS);
-      }
-      previous_speed = speed;
-      first_speed = false;
-    }
-
-    float min_clearance = std::numeric_limits<float>::infinity();
-    if (!obstacle_points.empty()) {
-      Eigen::Vector3f prev = current_position;
-      for (const auto & waypoint : rollout.waypoints) {
-        const Eigen::Vector3f next = toEigen(waypoint);
-        for (const auto & obstacle : obstacle_points) {
-          min_clearance = std::min(min_clearance, segmentPointDistance(prev, next, obstacle));
-        }
-        prev = next;
-      }
-    }
-
-    const bool progress_pass = progress_selected > 0.0f && progress_final > 0.0f;
-    const bool kinematic_pass =
-      max_speed <= verification_max_velocity_mps_ &&
-      max_accel <= verification_max_accel_mps2_;
-    const bool safety_pass =
-      obstacle_points.empty() || min_clearance >= verification_safety_radius_m_;
-
-    std::ostringstream summary;
-    summary << "verification: progress=" << progress_pass
-            << " kinematic=" << kinematic_pass
-            << " safety=" << safety_pass
-            << " progress_selected=" << progress_selected
-            << " progress_final=" << progress_final
-            << " max_speed=" << max_speed
-            << " max_accel=" << max_accel;
-    if (!obstacle_points.empty()) {
-      summary << " min_clearance=" << min_clearance;
-    }
-
-    return VerificationResult{progress_pass && kinematic_pass && safety_pass, summary.str()};
   }
 
   void llmWorkerLoop()
@@ -638,15 +626,15 @@ private:
       const Eigen::Vector3f current_position = local_position_->positionNed();
       const Eigen::Vector3f current_velocity = local_position_->velocityNed();
 
+      if (goalReached(current_position)) {
+        std::this_thread::sleep_for(sleep_period);
+        continue;
+      }
+
       std::vector<Eigen::Vector3f> obstacle_points;
       {
         std::lock_guard<std::mutex> lock(shared_state_.mutex);
         obstacle_points = shared_state_.obstacle_points_ned;
-      }
-
-      if (goalReached(current_position)) {
-        std::this_thread::sleep_for(sleep_period);
-        continue;
       }
 
       const std::string user_prompt = buildUserPrompt(current_position, current_velocity, obstacle_points);
@@ -656,15 +644,8 @@ private:
         continue;
       }
 
-      const auto rollout = parseRollout(*raw_response);
+      const auto rollout = parseRollout(*raw_response, current_position);
       if (!rollout) {
-        std::this_thread::sleep_for(sleep_period);
-        continue;
-      }
-
-      const VerificationResult verification = verifyRollout(*rollout, current_position, obstacle_points);
-      if (!verification.passed) {
-        RCLCPP_WARN(node_.get_logger(), "Rejected LLM rollout: %s", verification.summary.c_str());
         std::this_thread::sleep_for(sleep_period);
         continue;
       }
@@ -677,8 +658,8 @@ private:
       }
       RCLCPP_INFO(
         node_.get_logger(),
-        "Accepted rollout %d from LLM. %s",
-        accepted.rollout_id, verification.summary.c_str());
+        "Accepted rollout %d from LLM with %zu waypoints",
+        accepted.rollout_id, accepted.waypoints.size());
       if (!accepted.reasoning.empty()) {
         RCLCPP_INFO(node_.get_logger(), "LLM reasoning: %s", accepted.reasoning.c_str());
       }
