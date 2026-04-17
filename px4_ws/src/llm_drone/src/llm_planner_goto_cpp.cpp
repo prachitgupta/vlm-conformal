@@ -143,7 +143,7 @@ public:
     goal_x_ = static_cast<float>(node_.declare_parameter<double>("goal_x", 35.0));
     goal_y_ = static_cast<float>(node_.declare_parameter<double>("goal_y", 3.0));
     goal_z_ = static_cast<float>(node_.declare_parameter<double>("goal_z", -2.5));
-    update_rate_hz_ = node_.declare_parameter<double>("update_rate", 1.0);
+    update_rate_hz_ = node_.declare_parameter<double>("update_rate", 0.5);
     max_horizontal_speed_mps_ = static_cast<float>(
       node_.declare_parameter<double>("max_horizontal_speed_mps", 6.0));
     max_vertical_speed_mps_ = static_cast<float>(
@@ -746,11 +746,8 @@ public:
   {
     RCLCPP_INFO(
       node_.get_logger(),
-      "Executor activated, switching to HOLD/LOITER before arm and takeoff");
-    scheduleMode(
-      px4_ros2::ModeBase::kModeIDLoiter,
-      [this](px4_ros2::Result result) { onHoldModeReady(result); },
-      true);
+      "Executor activated, waiting for arming checks before arm and takeoff");
+    waitReadyToArm([this](px4_ros2::Result ready_result) { onReadyToArm(ready_result); });
   }
 
   void onDeactivate(DeactivateReason reason) override
@@ -759,16 +756,6 @@ public:
   }
 
 private:
-  void onHoldModeReady(px4_ros2::Result result)
-  {
-    if (result != px4_ros2::Result::Success) {
-      RCLCPP_ERROR(node_.get_logger(), "Failed to switch to HOLD/LOITER: %s", resultToString(result));
-      return;
-    }
-    RCLCPP_INFO(node_.get_logger(), "Vehicle is in HOLD/LOITER. Waiting for arming checks.");
-    waitReadyToArm([this](px4_ros2::Result ready_result) { onReadyToArm(ready_result); });
-  }
-
   void onReadyToArm(px4_ros2::Result result)
   {
     if (result != px4_ros2::Result::Success) {

@@ -79,9 +79,24 @@ target_link_libraries(
   px4_ros2_cpp::px4_ros2_cpp
 )
 
+add_executable(llm_planner_goto_dummy_queue_cpp src/llm_planner_goto_dummy_queue_cpp.cpp)
+target_compile_features(llm_planner_goto_dummy_queue_cpp PUBLIC cxx_std_17)
+ament_target_dependencies(
+  llm_planner_goto_dummy_queue_cpp
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  px4_msgs
+)
+target_link_libraries(
+  llm_planner_goto_dummy_queue_cpp
+  px4_ros2_cpp::px4_ros2_cpp
+)
+
 install(TARGETS
   mpc_optimal_planner_cpp
   llm_planner_goto_cpp
+  llm_planner_goto_dummy_queue_cpp
   DESTINATION lib/${PROJECT_NAME}
 )
 
