@@ -246,6 +246,7 @@ def parse_cli_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the llm_drone motion planner")
     parser.add_argument("--data-path", default=None, help="Override training dataset path")
     parser.add_argument("--prompt-file", default=None, help="Override system prompt file path")
+    parser.add_argument("--output-dir", default=None, help="Override training output directory")
     parser.add_argument(
         "--model-name",
         default=None,
@@ -285,6 +286,8 @@ def load_system_prompt_override(prompt_override: str | None) -> str:
 CLI_ARGS = parse_cli_args()
 if CLI_ARGS.data_path:
     cfg.data_path = str(resolve_repo_relative_path(CLI_ARGS.data_path))
+if CLI_ARGS.output_dir:
+    cfg.output_dir = str(resolve_repo_relative_path(CLI_ARGS.output_dir))
 if CLI_ARGS.model_name:
     model_candidate = Path(CLI_ARGS.model_name).expanduser()
     cfg.model_name = (

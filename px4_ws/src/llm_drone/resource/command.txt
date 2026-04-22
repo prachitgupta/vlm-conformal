@@ -293,5 +293,6 @@ ros2 run llm_drone llm_planner_goto_cpp --ros-args \
 
 
 
-python3 scripts/train.py --model-name models/drone_planner_checkpoints/final_merged --data-path dataset/teacher_dataset.csv --prompt-file config/variant_X.txt
-python3 scripts/train.py --data-path dataset/dataset_merged_without_reasoning.csv --prompt-file config/variant_X_without_reasoning.txt
+python3 scripts/train.py --model-name models/drone_planner_checkpoints/final_merged --data-path dataset/teacher_dataset.csv --prompt-file config/variant_X.txt --output-dir models/deone_planner_student
+##drone_planner_student
+python3 scripts/train.py --data-path dataset/dataset_merged_without_reasoning.csv --prompt-file config/variant_X_without_reasoning.txt --output-dir models/drone_planner_student_distilled
