@@ -22,10 +22,12 @@ DEFAULT_MASTER_COMMAND = str(
     (Path.home() / "PX4-Autopilot" / "Tools" / "simulation" / "gz" / "launch_obstacle_avoidance_full_stack.sh").resolve()
 )
 DEFAULT_MODEL_SPEC = str(REPO_ROOT / "models" / "drone_planner_check")
-DEFAULT_SERVED_MODEL_NAME = "drone_planner_check"
+DEFAULT_SERVED_MODEL_NAME = "qwen25_7b_drone_planner"
 DEFAULT_VLLM_PORT = 8000
-DEFAULT_VLLM_HOST = "127.0.0.1"
+DEFAULT_VLLM_HOST = "172.22.224.93"
 DEFAULT_API_KEY = "token-abc123"
+DEFAULT_OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+DEFAULT_OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 DEFAULT_PROMPT_FILE = str(REPO_ROOT / "config" / "variant_X.txt")
 DEFAULT_MASTER_READY_MARKER = "Opening Terminal 3: MicroXRCEAgent"
 DEFAULT_PX4_READY_TOPICS = (
@@ -53,9 +55,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cuda-visible-devices", default="1")
     parser.add_argument("--model", default=DEFAULT_MODEL_SPEC)
     parser.add_argument("--served-model-name", default=DEFAULT_SERVED_MODEL_NAME)
+    parser.add_argument("--llm-backend", choices=("vllm", "openai"), default="vllm")
     parser.add_argument("--vllm-host", default=DEFAULT_VLLM_HOST)
     parser.add_argument("--vllm-port", type=int, default=DEFAULT_VLLM_PORT)
     parser.add_argument("--api-key", default=DEFAULT_API_KEY)
+    parser.add_argument("--openai-model", default=DEFAULT_OPENAI_MODEL)
+    parser.add_argument("--openai-url", default=DEFAULT_OPENAI_URL)
+    parser.add_argument(
+        "--openai-api-key",
+        default=os.environ.get("OPENAI_API_KEY", ""),
+        help="Defaults to OPENAI_API_KEY.",
+    )
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.75)
     parser.add_argument("--max-model-len", type=int, default=4096)
@@ -65,6 +75,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--goal-z", type=float, default=2.5)
     parser.add_argument("--planner-prompt-file", default=DEFAULT_PROMPT_FILE)
     parser.add_argument("--vllm-timeout-s", type=float, default=300.0)
+    parser.add_argument(
+        "--start-local-vllm",
+        action="store_true",
+        help="Start vLLM on this machine. By default the script uses an already-running remote vLLM server.",
+    )
     return parser.parse_args()
 
 
@@ -272,7 +287,6 @@ def main() -> int:
 
     vllm_url = f"http://{args.vllm_host}:{args.vllm_port}/v1/chat/completions"
     vllm_health_url = f"http://{args.vllm_host}:{args.vllm_port}/health"
-
     master = ManagedProcess(
         name="master",
         cmd=workspace_wrapped(args.master_command),
@@ -284,6 +298,8 @@ def main() -> int:
         "llm_drone",
         "llm_planner_goto_cpp",
         "--ros-args",
+        "-p",
+        f"llm_backend:={args.llm_backend}",
         "-p",
         f"goal_x:={args.goal_x}",
         "-p",
@@ -298,7 +314,13 @@ def main() -> int:
         f"vllm_model:={args.served_model_name}",
         "-p",
         f"vllm_api_key:={args.api_key}",
+        "-p",
+        f"openai_url:={args.openai_url}",
+        "-p",
+        f"openai_model:={args.openai_model}",
     ]
+    if args.openai_api_key:
+        planner_tokens.extend(["-p", f"openai_api_key:={args.openai_api_key}"])
     if planner_prompt_file:
         planner_tokens.extend(["-p", f"prompt_file:={planner_prompt_file}"])
 
@@ -322,11 +344,17 @@ def main() -> int:
         ),
     )
 
-    processes = [planner, vllm, master]
+    processes = [planner, master]
+    if args.llm_backend == "vllm" and args.start_local_vllm:
+        processes.append(vllm)
     try:
         print("[startup] launching PX4/Gazebo master stack", flush=True)
         print(f"[startup] master command: {args.master_command}", flush=True)
-        print(f"[startup] vLLM model spec: {model_spec}", flush=True)
+        print(f"[startup] llm backend: {args.llm_backend}", flush=True)
+        if args.llm_backend == "vllm":
+            print(f"[startup] vLLM model spec: {model_spec}", flush=True)
+        else:
+            print(f"[startup] OpenAI model: {args.openai_model}", flush=True)
         if planner_prompt_file:
             print(f"[startup] planner prompt file: {planner_prompt_file}", flush=True)
         master.start()
@@ -361,11 +389,17 @@ def main() -> int:
         )
         wait_for_ros_topic_message(args.odom_topic, timeout_s=args.odom_timeout_s)
 
-        print("[startup] launching vLLM server", flush=True)
-        vllm.start()
+        if args.llm_backend == "vllm" and args.start_local_vllm:
+            print("[startup] launching local vLLM server", flush=True)
+            vllm.start()
+        elif args.llm_backend == "openai":
+            print("[startup] using OpenAI API backend", flush=True)
+        else:
+            print("[startup] using remote/already-running vLLM server", flush=True)
 
-        print(f"[startup] waiting for vLLM health endpoint: {vllm_health_url}", flush=True)
-        wait_for_http_ready(vllm_health_url, timeout_s=args.vllm_timeout_s)
+        if args.llm_backend == "vllm":
+            print(f"[startup] waiting for LLM health endpoint: {vllm_health_url}", flush=True)
+            wait_for_http_ready(vllm_health_url, timeout_s=args.vllm_timeout_s)
 
         print("[startup] launching llm_planner_goto_cpp", flush=True)
         planner.start()

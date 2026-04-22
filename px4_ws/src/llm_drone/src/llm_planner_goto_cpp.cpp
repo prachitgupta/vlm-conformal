@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <deque>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <memory>
@@ -49,6 +50,8 @@ constexpr int kDepthSampleCountDefault = 500;
 constexpr size_t kObstacleHistoryMax = 200;
 constexpr char kDefaultPromptFile[] =
   "/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/config/variant_X.txt";
+constexpr char kDefaultOpenAiUrl[] = "https://api.openai.com/v1/chat/completions";
+constexpr char kDefaultOpenAiModel[] = "gpt-4o-mini";
 
 struct Waypoint
 {
@@ -119,6 +122,12 @@ static std::string loadTextFile(const std::string & path)
   std::ostringstream buffer;
   buffer << file.rdbuf();
   return buffer.str();
+}
+
+static std::string getenvOrEmpty(const char * name)
+{
+  const char * value = std::getenv(name);
+  return value != nullptr ? std::string(value) : std::string{};
 }
 
 static std::string extractJsonObject(const std::string & text)
@@ -205,15 +214,23 @@ public:
     depth_obstacle_samples_ = node_.declare_parameter<int>(
       "depth_obstacle_samples", kDepthSampleCountDefault);
     goal_frame_ = node_.declare_parameter<std::string>("goal_frame", "ned");
+    llm_backend_ = node_.declare_parameter<std::string>("llm_backend", "vllm");
     vllm_url_ = node_.declare_parameter<std::string>(
-      "vllm_url", "http://127.0.0.1:8000/v1/chat/completions");
+      "vllm_url", "http://172.22.224.93:8000/v1/chat/completions");
     vllm_model_ = node_.declare_parameter<std::string>(
-      "vllm_model", "drone_planner_chat");
+      "vllm_model", "drone_planner_gt");
     vllm_api_key_ = node_.declare_parameter<std::string>("vllm_api_key", "token-abc123");
+    openai_url_ = node_.declare_parameter<std::string>("openai_url", kDefaultOpenAiUrl);
+    openai_model_ = node_.declare_parameter<std::string>("openai_model", kDefaultOpenAiModel);
+    openai_api_key_ = node_.declare_parameter<std::string>("openai_api_key", "");
     vllm_temperature_ = node_.declare_parameter<double>("vllm_temperature", 0.3);
     vllm_max_tokens_ = node_.declare_parameter<int>("vllm_max_tokens", 256);
     prompt_file_ = node_.declare_parameter<std::string>("prompt_file", kDefaultPromptFile);
     heading_rad_ = static_cast<float>(node_.declare_parameter<double>("heading_rad", std::numeric_limits<double>::quiet_NaN()));
+
+    if (openai_api_key_.empty()) {
+      openai_api_key_ = getenvOrEmpty("OPENAI_API_KEY");
+    }
 
     goal_ned_ = convertGoalToNed(Eigen::Vector3f{goal_x_, goal_y_, goal_z_}, goal_frame_);
 
@@ -231,8 +248,8 @@ public:
 
     RCLCPP_INFO(
       node_.get_logger(),
-      "LLM goto planner mode initialized. goal_ned=(%.2f, %.2f, %.2f) model=%s",
-      goal_ned_.x(), goal_ned_.y(), goal_ned_.z(), vllm_model_.c_str());
+      "LLM goto planner mode initialized. goal_ned=(%.2f, %.2f, %.2f) backend=%s model=%s",
+      goal_ned_.x(), goal_ned_.y(), goal_ned_.z(), llm_backend_.c_str(), activeModelName().c_str());
   }
 
   ~LlmGotoPlannerMode() override
@@ -525,8 +542,25 @@ private:
       return std::nullopt;
     }
 
+    const std::string request_url = activeRequestUrl();
+    const std::string model_name = activeModelName();
+    const std::string api_key = activeApiKey();
+
+    if (request_url.empty() || model_name.empty()) {
+      RCLCPP_ERROR(node_.get_logger(), "LLM backend is missing URL or model configuration");
+      curl_easy_cleanup(curl);
+      return std::nullopt;
+    }
+    if (usingOpenAiBackend() && api_key.empty()) {
+      RCLCPP_ERROR(
+        node_.get_logger(),
+        "OpenAI backend selected but openai_api_key and OPENAI_API_KEY are empty");
+      curl_easy_cleanup(curl);
+      return std::nullopt;
+    }
+
     json payload = {
-      {"model", vllm_model_},
+      {"model", model_name},
       {"temperature", vllm_temperature_},
       {"max_tokens", vllm_max_tokens_},
       {"messages", {
@@ -536,12 +570,14 @@ private:
     };
 
     std::string response;
-    std::string auth_header = "Authorization: Bearer " + vllm_api_key_;
     struct curl_slist * headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, auth_header.c_str());
+    if (!api_key.empty()) {
+      const std::string auth_header = "Authorization: Bearer " + api_key;
+      headers = curl_slist_append(headers, auth_header.c_str());
+    }
 
-    curl_easy_setopt(curl, CURLOPT_URL, vllm_url_.c_str());
+    curl_easy_setopt(curl, CURLOPT_URL, request_url.c_str());
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     const std::string body = payload.dump();
@@ -557,11 +593,11 @@ private:
     curl_easy_cleanup(curl);
 
     if (result != CURLE_OK) {
-      RCLCPP_ERROR(node_.get_logger(), "vLLM request failed: %s", curl_easy_strerror(result));
+      RCLCPP_ERROR(node_.get_logger(), "LLM request failed: %s", curl_easy_strerror(result));
       return std::nullopt;
     }
     if (http_code < 200 || http_code >= 300) {
-      RCLCPP_ERROR(node_.get_logger(), "vLLM returned HTTP %ld: %s", http_code, response.c_str());
+      RCLCPP_ERROR(node_.get_logger(), "LLM backend returned HTTP %ld: %s", http_code, response.c_str());
       return std::nullopt;
     }
 
@@ -569,9 +605,33 @@ private:
       const auto outer = json::parse(response);
       return outer.at("choices").at(0).at("message").at("content").get<std::string>();
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(node_.get_logger(), "Failed to parse vLLM envelope: %s", exc.what());
+      RCLCPP_ERROR(node_.get_logger(), "Failed to parse LLM response envelope: %s", exc.what());
       return std::nullopt;
     }
+  }
+
+  bool usingOpenAiBackend() const
+  {
+    std::string backend = llm_backend_;
+    std::transform(
+      backend.begin(), backend.end(), backend.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return backend == "openai" || backend == "chatgpt";
+  }
+
+  std::string activeRequestUrl() const
+  {
+    return usingOpenAiBackend() ? openai_url_ : vllm_url_;
+  }
+
+  std::string activeModelName() const
+  {
+    return usingOpenAiBackend() ? openai_model_ : vllm_model_;
+  }
+
+  std::string activeApiKey() const
+  {
+    return usingOpenAiBackend() ? openai_api_key_ : vllm_api_key_;
   }
 
   std::optional<PlannerRollout> parseRollout(
@@ -698,9 +758,13 @@ private:
   float verification_max_accel_mps2_{12.0f};
   int depth_obstacle_samples_{kDepthSampleCountDefault};
   std::string goal_frame_{"ned"};
+  std::string llm_backend_{"vllm"};
   std::string vllm_url_;
   std::string vllm_model_;
   std::string vllm_api_key_;
+  std::string openai_url_;
+  std::string openai_model_;
+  std::string openai_api_key_;
   double vllm_temperature_{0.3};
   int vllm_max_tokens_{256};
   std::string prompt_file_;

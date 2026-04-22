@@ -270,3 +270,28 @@ scp -r prachit2@172.22.224.93:/home/prachit2/vlm-conformal/px4_ws/src/llm_drone/
 
 python3 scripts/start_llm_planner_goto_cpp_stack.py \
   --planner-prompt-file /home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/config/variant_X.txt
+
+
+python3 scripts/start_llm_planner_goto_cpp_stack.py \
+  --model /home/prachit2/vlm-conformal/px4_ws/src/llm_drone/models/qwen25_7b_drone_planner \
+  --served-model-name qwen25_7b_drone_plannersp
+
+
+ros2 run llm_drone llm_planner_goto_cpp --ros-args -p llm_backend:=vllm -p goal_x:=29.0 -p goal_y:=0.0 -p goal_z:=2.5 -p goal_frame:=gazebo -p vllm_url:=http://172.22.224.93:8000/v1/chat/completions -p vllm_model:=drone_planner_gt -p vllm_api_key:=token-abc123 -p prompt_file:=/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/config/variant_X.txt
+
+
+export OPENAI_API_KEY="your-openai-key"
+ros2 run llm_drone llm_planner_goto_cpp --ros-args \
+  -p llm_backend:=openai \
+  -p goal_x:=29.0 \
+  -p goal_y:=0.0 \
+  -p goal_z:=2.5 \
+  -p goal_frame:=gazebo \
+  -p openai_model:=gpt-4o-mini \
+  -p openai_url:=https://api.openai.com/v1/chat/completions \
+  -p prompt_file:=/home/prachit/Desktop/vlm-conformal/px4_ws/src/llm_drone/config/variant_X.txt
+
+
+
+python3 scripts/train.py --model-name models/drone_planner_checkpoints/final_merged --data-path dataset/teacher_dataset.csv --prompt-file config/variant_X.txt
+python3 scripts/train.py --data-path dataset/dataset_merged_without_reasoning.csv --prompt-file config/variant_X_without_reasoning.txt

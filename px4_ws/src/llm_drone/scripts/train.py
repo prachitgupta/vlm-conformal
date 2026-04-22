@@ -246,6 +246,11 @@ def parse_cli_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the llm_drone motion planner")
     parser.add_argument("--data-path", default=None, help="Override training dataset path")
     parser.add_argument("--prompt-file", default=None, help="Override system prompt file path")
+    parser.add_argument(
+        "--model-name",
+        default=None,
+        help="Override base model name or provide a local merged-model directory to continue training from.",
+    )
     args, unknown = parser.parse_known_args()
     if unknown:
         log.warning("Ignoring unknown CLI args: %s", unknown)
@@ -280,6 +285,13 @@ def load_system_prompt_override(prompt_override: str | None) -> str:
 CLI_ARGS = parse_cli_args()
 if CLI_ARGS.data_path:
     cfg.data_path = str(resolve_repo_relative_path(CLI_ARGS.data_path))
+if CLI_ARGS.model_name:
+    model_candidate = Path(CLI_ARGS.model_name).expanduser()
+    cfg.model_name = (
+        str(model_candidate.resolve())
+        if model_candidate.exists()
+        else str(CLI_ARGS.model_name).strip()
+    )
 SELECTED_PROMPT_PATH = resolve_system_prompt_path(CLI_ARGS.prompt_file)
 
 
@@ -371,6 +383,7 @@ def prepare_generation_inputs(tokenizer, messages, device):
 SYSTEM_PROMPT = load_system_prompt_override(CLI_ARGS.prompt_file)
 log.info("Using dataset file: %s", cfg.data_path)
 log.info("Using system prompt file: %s", SELECTED_PROMPT_PATH)
+log.info("Using model source: %s", cfg.model_name)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -631,6 +644,12 @@ def load_model_and_tokenizer(cfg: TrainConfig):
         log.info("Aligned tokenizer EOS token to chat template terminator: %s", tokenizer.eos_token)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+
+    model_source_path = Path(str(cfg.model_name)).expanduser()
+    if model_source_path.exists():
+        log.info("Loaded model from local directory: %s", model_source_path.resolve())
+    else:
+        log.info("Loaded model from model hub id: %s", cfg.model_name)
 
     log.info("Base model loaded successfully.")
     return model, tokenizer
@@ -1100,10 +1119,17 @@ def main():
     log.info(f"  TensorBoard logs: {logs_dir}")
 
     resume_checkpoint = find_latest_checkpoint(cfg.output_dir)
+    model_source_path = Path(str(cfg.model_name)).expanduser()
+    is_local_model_dir = model_source_path.exists() and model_source_path.is_dir()
     if resume_checkpoint is not None:
         log.info(f"Resuming from latest checkpoint: {resume_checkpoint}")
     else:
         log.info("No prior checkpoint found. Starting fresh training run.")
+        if is_local_model_dir:
+            log.info(
+                "Starting from local model directory without trainer checkpoint resume: %s",
+                model_source_path.resolve(),
+            )
 
     training_completed = False
     try:

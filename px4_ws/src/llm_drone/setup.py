@@ -55,6 +55,7 @@ setup(
             'generate_synthetic_prompts = llm_drone.llm.generate_synthetic_prompts:main',
             'ground_truth_generator = llm_drone.llm.ground_truth_generator:main',
             'offline_dataset_batch_runner = llm_drone.llm.offline_dataset_batch_runner:main',
+            'live_env_prompt_monitor = llm_drone.llm.live_env_prompt_monitor:main',
         ],
     },
 )
